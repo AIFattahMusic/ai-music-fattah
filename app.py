@@ -13,7 +13,7 @@ app = FastAPI()
 MUSICAPI_KEY = os.getenv("MUSICAPI_KEY")
 
 if not MUSICAPI_KEY:
-    raise Exception("MUSICAPI_KEY belum diset. Set di Render Environment Variables!")
+    raise Exception("MUSICAPI_KEY belum diset. Set di Render Environment Variables.")
 
 MUSICAPI_CREATE_URL = "https://api.musicapi.ai/api/v1/sonic/create"
 MUSICAPI_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task"
@@ -28,11 +28,10 @@ HEADERS = {
 # =========================
 class GenerateRequest(BaseModel):
     prompt: str
+    title: Optional[str] = "Lagu AI"
     mv: Optional[str] = "sonic-v4-5"
     custom_mode: Optional[bool] = False
     instrumental: Optional[bool] = False
-    title: Optional[str] = None
-    negative_tags: Optional[str] = None
 
 
 # =========================
@@ -42,21 +41,16 @@ class GenerateRequest(BaseModel):
 def generate_full_song(req: GenerateRequest):
     payload = {
         "prompt": req.prompt,
+        "title": req.title,
         "mv": req.mv,
         "custom_mode": req.custom_mode,
         "instrumental": req.instrumental
     }
 
-    # optional
-    if req.title:
-        payload["title"] = req.title
-    if req.negative_tags:
-        payload["negative_tags"] = req.negative_tags
-
     r = requests.post(MUSICAPI_CREATE_URL, headers=HEADERS, json=payload)
 
     if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
+        raise HTTPException(status_code=400, detail=r.text)
 
     return r.json()
 
@@ -92,7 +86,7 @@ def generate_status(task_id: str):
 
 
 # =========================
-# 3) STREAM AUDIO (biar bisa dibuka)
+# 3) STREAM AUDIO (BIAR BISA DIBUKA)
 # =========================
 @app.get("/audio")
 def stream_audio(url: str):
