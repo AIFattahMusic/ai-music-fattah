@@ -15,7 +15,7 @@ MUSICAPI_KEY = os.getenv("MUSICAPI_KEY")
 if not MUSICAPI_KEY:
     raise Exception("MUSICAPI_KEY belum di-set di Render Environment Variables")
 
-BASE_URL = os.getenv("BASE_URL", "https://musicapi.ai/api")
+BASE_URL = os.getenv("BASE_URL", "https://api.musicapi.ai/api")
 
 CREATE_URL = f"{BASE_URL}/v1/sonic/create"
 STATUS_URL = f"{BASE_URL}/v1/sonic/task"
@@ -107,3 +107,4 @@ def stream_audio(url: str):
 @app.get("/")
 def root():
     return {"message": "API jalan bro ✅"}
+
