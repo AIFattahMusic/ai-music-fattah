@@ -7,79 +7,57 @@ from typing import Optional
 
 app = FastAPI()
 
-MUSICAPI_KEY = os.getenv("MUSICAPI_KEY", "")
-BASE_URL = os.getenv("BASE_URL", "https://api.musicapi.ai/api")
+# =========================
+# CONFIG
+# =========================
+MUSICAPI_KEY = os.getenv("MUSICAPI_KEY")
 
+if not MUSICAPI_KEY:
+    raise Exception("MUSICAPI_KEY belum di-set di Render Environment Variables")
+
+BASE_URL = "https://api.musicapi.ai/api"
 CREATE_URL = f"{BASE_URL}/v1/sonic/create"
 STATUS_URL = f"{BASE_URL}/v1/sonic/task"
 
+HEADERS = {
+    "Authorization": f"Bearer {MUSICAPI_KEY}",
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0"
+}
 
-def get_headers():
-    if not MUSICAPI_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="MUSICAPI_KEY belum di-set di Render Environment Variables"
-        )
-    return {
-        "Authorization": f"Bearer {MUSICAPI_KEY}",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0"
-    }
-
-
+# =========================
+# REQUEST MODEL
+# =========================
 class GenerateRequest(BaseModel):
     prompt: str
     title: Optional[str] = None
-    mv: Optional[str] = "sonic-v4-5"
-    custom_mode: Optional[bool] = False
-    instrumental: Optional[bool] = False
+    mv: str = "sonic-v4-5"
+    custom_mode: bool = False
+    instrumental: bool = False
 
-
+# =========================
+# 1) GENERATE SONG
+# =========================
 @app.post("/generate/full-song")
 def generate_full_song(req: GenerateRequest):
-    payload = req.model_dump(exclude_none=True)
+    payload = req.dict(exclude_none=True)  # FIX PENTING (pydantic v1)
 
-    try:
-        r = requests.post(
-            CREATE_URL,
-            headers=get_headers(),
-            json=payload,
-            timeout=120
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Request ke MusicAPI gagal: {str(e)}")
+    r = requests.post(CREATE_URL, headers=HEADERS, json=payload, timeout=60)
 
-    # kalau gagal, tampilkan detail jelas
     if r.status_code != 200:
-        return {
-            "error": "MusicAPI error",
-            "status_code": r.status_code,
-            "response_text": r.text,
-            "payload_sent": payload,
-            "create_url": CREATE_URL
-        }
+        raise HTTPException(status_code=r.status_code, detail=r.text)
 
     return r.json()
 
-
+# =========================
+# 2) CHECK STATUS
+# =========================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
-    try:
-        r = requests.get(
-            f"{STATUS_URL}/{task_id}",
-            headers=get_headers(),
-            timeout=120
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Request status ke MusicAPI gagal: {str(e)}")
+    r = requests.get(f"{STATUS_URL}/{task_id}", headers=HEADERS, timeout=60)
 
     if r.status_code != 200:
-        return {
-            "error": "MusicAPI status error",
-            "status_code": r.status_code,
-            "response_text": r.text,
-            "status_url": f"{STATUS_URL}/{task_id}"
-        }
+        raise HTTPException(status_code=r.status_code, detail=r.text)
 
     res = r.json()
     data = res.get("data")
@@ -89,7 +67,7 @@ def generate_status(task_id: str):
     elif isinstance(data, dict):
         item = data
     else:
-        return {"status": "processing", "result": res}
+        return {"status": "processing", "raw": res}
 
     state = item.get("state") or item.get("status")
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
@@ -99,28 +77,24 @@ def generate_status(task_id: str):
 
     return {"status": "processing", "result": item}
 
-
+# =========================
+# 3) STREAM AUDIO
+# =========================
 @app.get("/audio")
 def stream_audio(url: str):
-    try:
-        r = requests.get(
-            url,
-            stream=True,
-            timeout=120,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal ambil audio: {str(e)}")
+    r = requests.get(url, stream=True, timeout=60)
 
     if r.status_code != 200:
-        raise HTTPException(status_code=404, detail=f"Audio tidak bisa diambil. Status={r.status_code}")
+        raise HTTPException(status_code=404, detail="Audio tidak bisa diambil")
 
     return StreamingResponse(
         r.iter_content(chunk_size=1024 * 256),
         media_type="audio/mpeg"
     )
 
-
+# =========================
+# ROOT TEST
+# =========================
 @app.get("/")
 def root():
     return {"message": "API jalan bro ✅"}
