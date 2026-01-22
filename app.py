@@ -1,111 +1,86 @@
 import os
-import time
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 
 app = FastAPI()
 
-API_KEY = os.getenv("API_KEY")
-BASE_URL = os.getenv("BASE_URL", "https://api.kie.ai").rstrip("/")
+# =========================
+# CONFIG MUSICAPI
+# =========================
+MUSICAPI_KEY = os.getenv("MUSICAPI_KEY")
 
-if not API_KEY:
-    print("❌ ENV API_KEY belum di set")
+if not MUSICAPI_KEY:
+    raise Exception("MUSICAPI_KEY belum diset. Jalankan: set MUSICAPI_KEY=APIKEYKAMU")
 
+MUSICAPI_CREATE_URL = "https://api.musicapi.ai/api/v1/sonic/create"
+MUSICAPI_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task"
 
+HEADERS = {
+    "Authorization": f"Bearer {MUSICAPI_KEY}",
+    "Content-Type": "application/json"
+}
+
+# =========================
+# REQUEST MODEL
+# =========================
 class GenerateRequest(BaseModel):
-    prompt: str
+    mv: str = "sonic-v4-5"
+    custom_mode: bool = False
+    gpt_description_prompt: str
+    tags: Optional[str] = ""
 
-
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "AI Music API running"}
-
-
-def generate_music(prompt: str):
-    url = f"{BASE_URL}/api/v1/generate"
-
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json",
-        "accept": "application/json",
-    }
-
+# =========================
+# ENDPOINT 1: GENERATE FULL SONG
+# =========================
+@app.post("/generate/full-song")
+def generate_full_song(data: GenerateRequest):
     payload = {
-        "customMode": False,
-        "instrumental": False,
-        "model": "V3",
-        "prompt": prompt,
+        "mv": data.mv,
+        "custom_mode": data.custom_mode,
+        "gpt_description_prompt": data.gpt_description_prompt,
+        "tags": data.tags
     }
-
-    r = requests.post(url, headers=headers, json=payload, timeout=60)
-
-    # kalau API ngasih error
-    if r.status_code != 200:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Generate gagal {r.status_code}: {r.text}"
-        )
 
     try:
-        data = r.json()
-    except Exception:
-        raise HTTPException(status_code=500, detail=f"Response bukan JSON: {r.text}")
+        r = requests.post(MUSICAPI_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
 
-    # DEBUG biar keliatan bentuk response asli
-    if "data" not in data:
-        raise HTTPException(status_code=500, detail=f"Response tidak ada 'data': {data}")
-
-    if "taskId" not in data["data"]:
-        raise HTTPException(status_code=500, detail=f"Response tidak ada 'taskId': {data}")
-
-    return data["data"]["taskId"]
-
-
-def wait_task(task_id: str):
-    url = f"{BASE_URL}/api/v1/music/task/{task_id}"
-
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "accept": "application/json",
-    }
-
-    for _ in range(60):  # max 60x cek
-        r = requests.get(url, headers=headers, timeout=30)
-
+        # kalau error dari MusicAPI, tampilkan jelas
         if r.status_code != 200:
-            time.sleep(2)
-            continue
+            raise HTTPException(status_code=r.status_code, detail=r.text)
 
-        try:
-            data = r.json()
-        except Exception:
-            time.sleep(2)
-            continue
+        return r.json()
 
-        # cek struktur response
-        if "data" in data and "status" in data["data"]:
-            status = data["data"]["status"]
-
-            # sukses biasanya ada sunoData
-            if status == "SUCCESS":
-                try:
-                    audio_url = data["data"]["response"]["sunoData"][0]["audioUrl"]
-                    return audio_url
-                except Exception:
-                    raise HTTPException(status_code=500, detail=f"SUCCESS tapi audioUrl tidak ada: {data}")
-
-        time.sleep(2)
-
-    raise HTTPException(status_code=504, detail="Timeout: audio belum jadi")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/generate-song")
-def generate_song(data: GenerateRequest):
-    if not API_KEY:
-        raise HTTPException(status_code=500, detail="API_KEY belum diset di Render")
+# =========================
+# ENDPOINT 2: CEK STATUS TASK
+# =========================
+@app.get("/generate/status/{task_id}")
+def generate_status(task_id: str):
+    r = requests.get(f"{MUSICAPI_STATUS_URL}/{task_id}", headers=HEADERS)
 
-    task_id = generate_music(data.prompt)
-    audio_url = wait_task(task_id)
+    if r.status_code != 200:
+        raise HTTPException(status_code=404, detail=r.text)
 
-    return {"status": "success", "task_id": task_id, "audio_url": audio_url}
+    res = r.json()
+
+    # ambil data item pertama
+    item = None
+    if isinstance(res.get("data"), list) and len(res["data"]) > 0:
+        item = res["data"][0]
+
+    if not item:
+        return {"status": "processing", "result": res}
+
+    state = item.get("state") or item.get("status")
+    audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
+
+    # kalau sudah selesai dan ada audio
+    if state == "succeeded" and audio_url:
+        return {"status": "done", "audio_url": audio_url, "result": item}
+
+    return {"status": "processing", "result": item}
