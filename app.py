@@ -1,6 +1,7 @@
 import os
 import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -12,7 +13,7 @@ app = FastAPI()
 MUSICAPI_KEY = os.getenv("MUSICAPI_KEY")
 
 if not MUSICAPI_KEY:
-    raise Exception("MUSICAPI_KEY belum diset. Jalankan: set MUSICAPI_KEY=APIKEYKAMU")
+    raise Exception("MUSICAPI_KEY belum diset. Set di Render Environment Variables!")
 
 MUSICAPI_CREATE_URL = "https://api.musicapi.ai/api/v1/sonic/create"
 MUSICAPI_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task"
@@ -26,38 +27,42 @@ HEADERS = {
 # REQUEST MODEL
 # =========================
 class GenerateRequest(BaseModel):
-    mv: str = "sonic-v4-5"
-    custom_mode: bool = False
-    gpt_description_prompt: str
-    tags: Optional[str] = ""
+    prompt: str
+    mv: Optional[str] = "sonic-v4-5"
+    custom_mode: Optional[bool] = False
+    instrumental: Optional[bool] = False
+    title: Optional[str] = None
+    negative_tags: Optional[str] = None
+
 
 # =========================
-# ENDPOINT 1: GENERATE FULL SONG
+# 1) GENERATE FULL SONG
 # =========================
 @app.post("/generate/full-song")
-def generate_full_song(data: GenerateRequest):
+def generate_full_song(req: GenerateRequest):
     payload = {
-        "mv": data.mv,
-        "custom_mode": data.custom_mode,
-        "gpt_description_prompt": data.gpt_description_prompt,
-        "tags": data.tags
+        "prompt": req.prompt,
+        "mv": req.mv,
+        "custom_mode": req.custom_mode,
+        "instrumental": req.instrumental
     }
 
-    try:
-        r = requests.post(MUSICAPI_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
+    # optional
+    if req.title:
+        payload["title"] = req.title
+    if req.negative_tags:
+        payload["negative_tags"] = req.negative_tags
 
-        # kalau error dari MusicAPI, tampilkan jelas
-        if r.status_code != 200:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
+    r = requests.post(MUSICAPI_CREATE_URL, headers=HEADERS, json=payload)
 
-        return r.json()
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return r.json()
 
 
 # =========================
-# ENDPOINT 2: CEK STATUS TASK
+# 2) CHECK STATUS
 # =========================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
@@ -84,3 +89,27 @@ def generate_status(task_id: str):
         return {"status": "done", "audio_url": audio_url, "result": item}
 
     return {"status": "processing", "result": item}
+
+
+# =========================
+# 3) STREAM AUDIO (biar bisa dibuka)
+# =========================
+@app.get("/audio")
+def stream_audio(url: str):
+    r = requests.get(url, stream=True)
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=404, detail="Audio tidak bisa diambil")
+
+    return StreamingResponse(
+        r.iter_content(chunk_size=1024 * 256),
+        media_type="audio/mpeg"
+    )
+
+
+# =========================
+# ROOT TEST
+# =========================
+@app.get("/")
+def root():
+    return {"message": "API jalan bro ✅"}
