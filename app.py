@@ -8,15 +8,17 @@ from typing import Optional
 app = FastAPI()
 
 # =========================
-# CONFIG MUSICAPI
+# CONFIG
 # =========================
 MUSICAPI_KEY = os.getenv("MUSICAPI_KEY")
 
 if not MUSICAPI_KEY:
-    raise Exception("MUSICAPI_KEY belum diset. Set di Render Environment Variables.")
+    raise Exception("MUSICAPI_KEY belum di-set di Render Environment Variables")
 
-MUSICAPI_CREATE_URL = "https://api.musicapi.ai/api/v1/sonic/create"
-MUSICAPI_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task"
+BASE_URL = os.getenv("BASE_URL", "https://musicapi.ai/api")
+
+CREATE_URL = f"{BASE_URL}/v1/sonic/create"
+STATUS_URL = f"{BASE_URL}/v1/sonic/task"
 
 HEADERS = {
     "Authorization": f"Bearer {MUSICAPI_KEY}",
@@ -28,14 +30,14 @@ HEADERS = {
 # =========================
 class GenerateRequest(BaseModel):
     prompt: str
-    title: Optional[str] = "Lagu AI"
+    title: Optional[str] = None
     mv: Optional[str] = "sonic-v4-5"
     custom_mode: Optional[bool] = False
     instrumental: Optional[bool] = False
 
 
 # =========================
-# 1) GENERATE FULL SONG
+# 1) GENERATE SONG
 # =========================
 @app.post("/generate/full-song")
 def generate_full_song(req: GenerateRequest):
@@ -47,10 +49,10 @@ def generate_full_song(req: GenerateRequest):
         "instrumental": req.instrumental
     }
 
-    r = requests.post(MUSICAPI_CREATE_URL, headers=HEADERS, json=payload)
+    r = requests.post(CREATE_URL, headers=HEADERS, json=payload)
 
     if r.status_code != 200:
-        raise HTTPException(status_code=400, detail=r.text)
+        raise HTTPException(status_code=r.status_code, detail=r.text)
 
     return r.json()
 
@@ -60,14 +62,13 @@ def generate_full_song(req: GenerateRequest):
 # =========================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
-    r = requests.get(f"{MUSICAPI_STATUS_URL}/{task_id}", headers=HEADERS)
+    r = requests.get(f"{STATUS_URL}/{task_id}", headers=HEADERS)
 
     if r.status_code != 200:
-        raise HTTPException(status_code=404, detail=r.text)
+        raise HTTPException(status_code=r.status_code, detail=r.text)
 
     res = r.json()
 
-    # ambil data item pertama
     item = None
     if isinstance(res.get("data"), list) and len(res["data"]) > 0:
         item = res["data"][0]
@@ -78,7 +79,6 @@ def generate_status(task_id: str):
     state = item.get("state") or item.get("status")
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
-    # kalau sudah selesai dan ada audio
     if state == "succeeded" and audio_url:
         return {"status": "done", "audio_url": audio_url, "result": item}
 
@@ -86,7 +86,7 @@ def generate_status(task_id: str):
 
 
 # =========================
-# 3) STREAM AUDIO (BIAR BISA DIBUKA)
+# 3) STREAM AUDIO (BIAR BISA DIPUTAR DI APK)
 # =========================
 @app.get("/audio")
 def stream_audio(url: str):
