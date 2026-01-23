@@ -1,100 +1,86 @@
 import os
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
 app = FastAPI()
 
 # =========================
-# CONFIG
+# CONFIG MUSICAPI
 # =========================
 MUSICAPI_KEY = os.getenv("MUSICAPI_KEY")
 
 if not MUSICAPI_KEY:
-    raise Exception("MUSICAPI_KEY belum di-set di Render Environment Variables")
+    raise Exception("MUSICAPI_KEY belum diset. Jalankan: set MUSICAPI_KEY=APIKEYKAMU")
 
-BASE_URL = "https://api.musicapi.ai/api"
-CREATE_URL = f"{BASE_URL}/v1/sonic/create"
-STATUS_URL = f"{BASE_URL}/v1/sonic/task"
+MUSICAPI_CREATE_URL = "https://api.musicapi.ai/api/v1/sonic/create"
+MUSICAPI_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task"
 
 HEADERS = {
     "Authorization": f"Bearer {MUSICAPI_KEY}",
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0"
+    "Content-Type": "application/json"
 }
 
 # =========================
 # REQUEST MODEL
 # =========================
 class GenerateRequest(BaseModel):
-    prompt: str
-    title: Optional[str] = None
     mv: str = "sonic-v4-5"
     custom_mode: bool = False
-    instrumental: bool = False
+    gpt_description_prompt: str
+    tags: Optional[str] = ""
 
 # =========================
-# 1) GENERATE SONG
+# ENDPOINT 1: GENERATE FULL SONG
 # =========================
 @app.post("/generate/full-song")
-def generate_full_song(req: GenerateRequest):
-    payload = req.dict(exclude_none=True)  # FIX PENTING (pydantic v1)
+def generate_full_song(data: GenerateRequest):
+    payload = {
+        "mv": data.mv,
+        "custom_mode": data.custom_mode,
+        "gpt_description_prompt": data.gpt_description_prompt,
+        "tags": data.tags
+    }
 
-    r = requests.post(CREATE_URL, headers=HEADERS, json=payload, timeout=60)
+    try:
+        r = requests.post(MUSICAPI_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
 
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
+        # kalau error dari MusicAPI, tampilkan jelas
+        if r.status_code != 200:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
 
-    return r.json()
+        return r.json()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # =========================
-# 2) CHECK STATUS
+# ENDPOINT 2: CEK STATUS TASK
 # =========================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
-    r = requests.get(f"{STATUS_URL}/{task_id}", headers=HEADERS, timeout=60)
+    r = requests.get(f"{MUSICAPI_STATUS_URL}/{task_id}", headers=HEADERS)
 
     if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
+        raise HTTPException(status_code=404, detail=r.text)
 
     res = r.json()
-    data = res.get("data")
 
-    if isinstance(data, list) and len(data) > 0:
-        item = data[0]
-    elif isinstance(data, dict):
-        item = data
-    else:
-        return {"status": "processing", "raw": res}
+    # ambil data item pertama
+    item = None
+    if isinstance(res.get("data"), list) and len(res["data"]) > 0:
+        item = res["data"][0]
+
+    if not item:
+        return {"status": "processing", "result": res}
 
     state = item.get("state") or item.get("status")
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
-    if state in ["succeeded", "success", "completed", "done"] and audio_url:
+    # kalau sudah selesai dan ada audio
+    if state == "succeeded" and audio_url:
         return {"status": "done", "audio_url": audio_url, "result": item}
 
     return {"status": "processing", "result": item}
-
-# =========================
-# 3) STREAM AUDIO
-# =========================
-@app.get("/audio")
-def stream_audio(url: str):
-    r = requests.get(url, stream=True, timeout=60)
-
-    if r.status_code != 200:
-        raise HTTPException(status_code=404, detail="Audio tidak bisa diambil")
-
-    return StreamingResponse(
-        r.iter_content(chunk_size=1024 * 256),
-        media_type="audio/mpeg"
-    )
-
-# =========================
-# ROOT TEST
-# =========================
-@app.get("/")
-def root():
-    return {"message": "API jalan bro ✅"}
