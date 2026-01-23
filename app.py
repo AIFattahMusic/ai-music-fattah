@@ -84,3 +84,24 @@ def generate_status(task_id: str):
         return {"status": "done", "audio_url": audio_url, "result": item}
 
     return {"status": "processing", "result": item}
+
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/gallery")
+def get_gallery():
+    return [
+        {
+            "id": 1,
+            "title": "Lagu 1",
+            "imageUrl": "https://picsum.photos/400/400",
+            "audioUrl": "https://example.com/audio1.mp3"
+        },
+        {
+            "id": 2,
+            "title": "Lagu 2",
+            "imageUrl": "https://picsum.photos/401/401",
+            "audioUrl": "https://example.com/audio2.mp3"
+        }
+    ]
