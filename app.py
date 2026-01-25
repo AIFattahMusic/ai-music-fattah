@@ -84,3 +84,8 @@ def generate_status(task_id: str):
         return {"status": "done", "audio_url": audio_url, "result": item}
 
     return {"status": "processing", "result": item}
+
+import os, psycopg2
+
+def get_conn():
+    return psycopg2.connect(os.environ["DATABASE_URL"])
