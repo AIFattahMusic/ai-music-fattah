@@ -93,21 +93,21 @@ def generate_music(data: GenerateReq):
             instrumental=data.instrumental,
             status="pending",
         )
-
         db.add(music)
         db.commit()
 
         payload = {
-            "style": data.style,
+            "model": "V5",  # WAJIB menurut KIE
             "title": data.title,
+            "style": data.style,
             "prompt": data.prompt,
             "instrumental": data.instrumental,
-            "callback_url": CALLBACK_URL,
-            "external_id": music_id,
+            "callBackUrl": CALLBACK_URL,   # NAMA HARUS INI
+            "external_id": music_id
         }
 
         res = requests.post(
-            "https://api.kie.ai/api/v1/generate/music",
+            "https://api.kie.ai/api/v1/suno-api/music-generation",
             json=payload,
             headers={
                 "Authorization": f"Bearer {KIE_API_KEY}",
@@ -115,6 +115,22 @@ def generate_music(data: GenerateReq):
             },
             timeout=30,
         )
+
+        if res.status_code != 200:
+            music.status = "failed"
+            db.commit()
+            raise HTTPException(
+                status_code=500,
+                detail=f"KIE API error: {res.text}"
+            )
+
+        return {
+            "id": music_id,
+            "status": "pending",
+        }
+
+    finally:
+        db.close()
 
         if res.status_code != 200:
             music.status = "failed"
@@ -191,5 +207,6 @@ def health():
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 
