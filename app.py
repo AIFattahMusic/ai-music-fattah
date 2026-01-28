@@ -1,5 +1,6 @@
 import os
 import uuid
+import time
 import requests
 from datetime import datetime
 
@@ -7,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from sqlalchemy import create_engine, Column, String, Boolean, DateTime
+from sqlalchemy import create_engine, Column, String, Boolean, DateTime, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # ================= ENV =================
@@ -26,9 +27,20 @@ DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"sslmode": "require"},
-    pool_pre_ping=True
+    pool_pre_ping=True,
+    pool_recycle=300
 )
+
+# ---- RETRY DB (WAJIB UNTUK RENDER) ----
+for i in range(5):
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        break
+    except Exception:
+        time.sleep(3)
+else:
+    raise RuntimeError("DATABASE TIDAK BISA DIAKSES")
 
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
