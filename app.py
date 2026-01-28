@@ -27,9 +27,7 @@ DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 engine = create_engine(
     DATABASE_URL,
     connect_args={"sslmode": "require"},
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10
+    pool_pre_ping=True
 )
 
 SessionLocal = sessionmaker(bind=engine)
@@ -58,7 +56,7 @@ class GenerateReq(BaseModel):
     prompt: str
     instrumental: bool = False
 
-# ================= GENERATE MUSIC =================
+# ================= GENERATE =================
 @app.post("/generate-music")
 def generate_music(data: GenerateReq):
     db = SessionLocal()
@@ -156,5 +154,4 @@ def download(music_id: str):
         )
 
     finally:
-        db.close()    return FileResponse(path, media_type="audio/mpeg", filename=f"{music.title}.mp3")
-
+        db.close()
