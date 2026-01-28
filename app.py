@@ -6,9 +6,9 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# =========================
+# =====================================================
 # ENV
-# =========================
+# =====================================================
 KIE_API_KEY = os.getenv("KIE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -17,15 +17,29 @@ if not KIE_API_KEY:
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL tidak ada")
 
-# =========================
-# DATABASE (POSTGRES - RENDER)
-# =========================
-engine = create_engine(DATABASE_URL)
+# =====================================================
+# FIX DATABASE URL (RENDER BUG FIX)
+# =====================================================
+# Render sering kasih: postgres://
+# SQLAlchemy butuh: postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# =====================================================
+# DATABASE (POSTGRESQL + SSL)
+# =====================================================
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"sslmode": "require"},
+    pool_pre_ping=True
+)
+
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 class MusicTask(Base):
     __tablename__ = "music_tasks"
+
     id = Column(Integer, primary_key=True)
     task_id = Column(String, unique=True, index=True)
     status = Column(String)
@@ -33,36 +47,41 @@ class MusicTask(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# =========================
-# KIE CONFIG
-# =========================
+# =====================================================
+# KIE.AI CONFIG (ENDPOINT BENAR)
+# =====================================================
 KIE_GENERATE_URL = "https://api.kie.ai/api/v1/suno/generate/music"
+
 HEADERS = {
     "Authorization": f"Bearer {KIE_API_KEY}",
     "Content-Type": "application/json"
 }
 
-# =========================
+# =====================================================
 # APP
-# =========================
+# =====================================================
 app = FastAPI(title="KIE.AI Music Generator")
 
 @app.get("/")
 def root():
-    return {"status": "OK", "db": "render-postgres"}
+    return {
+        "status": "OK",
+        "provider": "KIE.AI",
+        "database": "Render PostgreSQL (fixed)"
+    }
 
-# =========================
+# =====================================================
 # REQUEST MODEL
-# =========================
+# =====================================================
 class GenerateMusic(BaseModel):
     style: str
     title: str
     prompt: str
-    instrumental: bool = False
+    instrumental: bool = False  # ADA VOKAL
 
-# =========================
-# GENERATE MUSIC + SAVE DB
-# =========================
+# =====================================================
+# GENERATE MUSIC + SAVE DATABASE
+# =====================================================
 @app.post("/generate-music")
 async def generate_music(req: GenerateMusic):
     payload = {
@@ -84,37 +103,43 @@ async def generate_music(req: GenerateMusic):
     if r.status_code != 200:
         raise HTTPException(
             status_code=500,
-            detail=r.text
+            detail={
+                "kie_status": r.status_code,
+                "kie_response": r.text
+            }
         )
 
     task_id = r.json()["data"]["taskId"]
 
     db = SessionLocal()
-    db.add(MusicTask(
-        task_id=task_id,
-        status="submitted",
-        payload=json.dumps(payload)
-    ))
+    db.add(
+        MusicTask(
+            task_id=task_id,
+            status="submitted",
+            payload=json.dumps(payload)
+        )
+    )
     db.commit()
     db.close()
 
     return {
         "task_id": task_id,
-        "saved": True
+        "saved_to_database": True
     }
 
-# =========================
-# LIST DATA (CEK DATABASE)
-# =========================
+# =====================================================
+# LIST TASKS (CEK DATABASE)
+# =====================================================
 @app.get("/tasks")
 def list_tasks():
     db = SessionLocal()
-    data = db.query(MusicTask).all()
+    tasks = db.query(MusicTask).all()
     db.close()
+
     return [
         {
             "task_id": t.task_id,
             "status": t.status
         }
-        for t in data
+        for t in tasks
     ]
