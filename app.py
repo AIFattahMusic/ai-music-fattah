@@ -132,14 +132,7 @@ def generate_music(data: GenerateReq):
 
     finally:
         db.close()
-        if res.status_code != 200:
-            music.status = "failed"
-            db.commit()
-            raise HTTPException(500, res.text)
-
-        return {"id": music_id, "status": "pending"}
-    finally:
-        db.close()
+        
 
 
 # ================= CALLBACK =================
@@ -203,6 +196,7 @@ def health():
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 
 
