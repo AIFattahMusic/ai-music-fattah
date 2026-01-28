@@ -40,7 +40,6 @@ for i in range(5):
     except Exception:
         time.sleep(3)
 else:
-    raise RuntimeError("DATABASE TIDAK BISA DIAKSES")
 
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -167,3 +166,4 @@ def download(music_id: str):
 
     finally:
         db.close()
+
