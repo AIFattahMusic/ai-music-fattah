@@ -167,11 +167,8 @@ async def callback(req: Request):
         music.audio_url = audio_url
         db.commit()
         return {"ok": True}
-
     finally:
         db.close()
-
-
 # ================= DOWNLOAD =================
 @app.get("/download/{music_id}")
 def download(music_id: str):
@@ -206,6 +203,7 @@ def health():
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 
 
