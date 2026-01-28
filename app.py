@@ -57,7 +57,6 @@ app = FastAPI(title="AI Music Generator")
 
 @app.on_event("startup")
 def startup_db():
-    """Render-safe DB init"""
     for i in range(10):
         try:
             Base.metadata.create_all(bind=engine)
@@ -67,7 +66,8 @@ def startup_db():
             print(f"⏳ DB belum siap, retry {i+1}/10")
             time.sleep(3)
 
-    raise RuntimeError("❌ Database tidak bisa dikoneksi")
+    # ✅ JANGAN crash app
+    print("⚠️ Database belum siap, lanjutkan startup")
 
 
 # ================= SCHEMA =================
@@ -191,4 +191,5 @@ def health():
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
