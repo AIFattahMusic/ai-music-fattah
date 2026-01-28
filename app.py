@@ -26,7 +26,7 @@ if not CALLBACK_URL:
     raise RuntimeError("CALLBACK_URL belum di-set")
 
 # ===================== KIE.AI URL =====================
-KIE_GENERATE_URL = "https://api.kie.ai/suno-api/generate-music"
+"KIE_GENERATE_URL = "https://api.kie.ai/api/v1/generate/music""
 
 # ===================== DATABASE =====================
 DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -156,3 +156,4 @@ def list_music():
     data = db.query(Music).order_by(Music.created_at.desc()).all()
     db.close()
     return data
+
