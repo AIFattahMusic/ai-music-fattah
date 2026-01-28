@@ -82,6 +82,7 @@ class GenerateReq(BaseModel):
 @app.post("/generate-music")
 def generate_music(data: GenerateReq):
     db = SessionLocal()
+
     try:
         music_id = str(uuid.uuid4())
 
@@ -97,13 +98,13 @@ def generate_music(data: GenerateReq):
         db.commit()
 
         payload = {
-            "model": "V5",  # WAJIB menurut KIE
+            "model": "V5",
             "title": data.title,
             "style": data.style,
             "prompt": data.prompt,
             "instrumental": data.instrumental,
-            "callBackUrl": CALLBACK_URL,   # NAMA HARUS INI
-            "external_id": music_id
+            "callBackUrl": CALLBACK_URL,
+            "external_id": music_id,
         }
 
         res = requests.post(
@@ -121,7 +122,7 @@ def generate_music(data: GenerateReq):
             db.commit()
             raise HTTPException(
                 status_code=500,
-                detail=f"KIE API error: {res.text}"
+                detail=res.text,
             )
 
         return {
@@ -131,7 +132,6 @@ def generate_music(data: GenerateReq):
 
     finally:
         db.close()
-
         if res.status_code != 200:
             music.status = "failed"
             db.commit()
@@ -207,6 +207,7 @@ def health():
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 
 
