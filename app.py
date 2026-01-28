@@ -138,7 +138,6 @@ def generate_music(data: GenerateReq):
             raise HTTPException(500, res.text)
 
         return {"id": music_id, "status": "pending"}
-
     finally:
         db.close()
 
@@ -207,6 +206,7 @@ def health():
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 
 
