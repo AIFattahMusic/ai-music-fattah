@@ -28,11 +28,11 @@ DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_recycle=300
+    pool_recycle=300,
 )
 
 # ---- RETRY DB (WAJIB UNTUK RENDER) ----
-for i in range(5):
+for _ in range(5):
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -40,9 +40,16 @@ for i in range(5):
     except Exception:
         time.sleep(3)
 else:
+    raise RuntimeError("Gagal konek ke database setelah retry")
 
-SessionLocal = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,
+)
+
 Base = declarative_base()
+
 
 class Music(Base):
     __tablename__ = "musics"
@@ -56,16 +63,19 @@ class Music(Base):
     audio_url = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
 Base.metadata.create_all(bind=engine)
 
 # ================= FASTAPI =================
 app = FastAPI(title="AI Music Generator")
+
 
 class GenerateReq(BaseModel):
     style: str
     title: str
     prompt: str
     instrumental: bool = False
+
 
 # ================= GENERATE =================
 @app.post("/generate-music")
@@ -80,7 +90,7 @@ def generate_music(data: GenerateReq):
             style=data.style,
             prompt=data.prompt,
             instrumental=data.instrumental,
-            status="pending"
+            status="pending",
         )
 
         db.add(music)
@@ -92,7 +102,7 @@ def generate_music(data: GenerateReq):
             "prompt": data.prompt,
             "instrumental": data.instrumental,
             "callback_url": CALLBACK_URL,
-            "external_id": music_id
+            "external_id": music_id,
         }
 
         res = requests.post(
@@ -100,47 +110,58 @@ def generate_music(data: GenerateReq):
             json=payload,
             headers={
                 "Authorization": f"Bearer {KIE_API_KEY}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
-            timeout=30
+            timeout=30,
         )
 
         if res.status_code != 200:
-            raise HTTPException(500, res.text)
+            music.status = "failed"  # FIX
+            db.commit()
+            raise HTTPException(status_code=500, detail=res.text)
 
         return {
             "id": music_id,
-            "status": "pending"
+            "status": "pending",
         }
 
     finally:
         db.close()
+
 
 # ================= CALLBACK =================
 @app.post("/callback")
 async def callback(req: Request):
     body = await req.json()
 
-    music_id = body.get("external_id")
-    audio_url = body.get("audio_url")
+    # FIX: support flat & nested payload
+    music_id = body.get("external_id") or body.get("data", {}).get("external_id")
+    audio_url = body.get("audio_url") or body.get("data", {}).get("audio_url")
+    status = body.get("status") or body.get("data", {}).get("status", "complete")
 
-    if not music_id or not audio_url:
-        raise HTTPException(400, "Invalid callback payload")
+    if not music_id:
+        raise HTTPException(status_code=400, detail="Missing external_id")
 
     db = SessionLocal()
     try:
         music = db.query(Music).filter(Music.id == music_id).first()
         if not music:
-            raise HTTPException(404, "Music not found")
+            raise HTTPException(status_code=404, detail="Music not found")
 
-        music.status = "complete"
-        music.audio_url = audio_url
+        # FIX: idempotent callback
+        if music.status == "complete":
+            return {"ok": True}
+
+        music.status = status
+        if audio_url:
+            music.audio_url = audio_url
+
         db.commit()
-
         return {"ok": True}
 
     finally:
         db.close()
+
 
 # ================= DOWNLOAD =================
 @app.get("/download/{music_id}")
@@ -149,21 +170,33 @@ def download(music_id: str):
     try:
         music = db.query(Music).filter(Music.id == music_id).first()
 
-        if not music or not music.audio_url:
-            raise HTTPException(404, "Belum siap")
+        if not music or music.status != "complete" or not music.audio_url:
+            raise HTTPException(status_code=404, detail="Belum siap")
 
-        r = requests.get(music.audio_url, timeout=30)
+        # FIX: stream download (hemat RAM)
+        r = requests.get(music.audio_url, stream=True, timeout=30)
+        r.raise_for_status()
+
         path = f"/tmp/{music_id}.mp3"
-
         with open(path, "wb") as f:
-            f.write(r.content)
+            for chunk in r.iter_content(8192):
+                f.write(chunk)
+
+        # FIX: sanitize filename
+        safe_title = "".join(c for c in music.title if c.isalnum() or c in " _-")
+        filename = f"{safe_title or music_id}.mp3"
 
         return FileResponse(
             path,
             media_type="audio/mpeg",
-            filename=f"{music.title}.mp3"
+            filename=filename,
         )
 
     finally:
         db.close()
 
+
+# ================= HEALTH =================
+@app.get("/health")
+def health():
+    return {"ok": True}
