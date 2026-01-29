@@ -1,25 +1,26 @@
-import os, json
+import os, json, asyncio
 import httpx
 import psycopg2
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException
 from psycopg2.extras import RealDictCursor
 
 # ================= CONFIG =================
 SUNO_API_KEY = os.getenv("SUNO_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-CALLBACK_URL = os.getenv("CALLBACK_URL")  # FIXED PUBLIC URL
 
 if not SUNO_API_KEY:
     raise RuntimeError("SUNO_API_KEY missing")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL missing")
-if not CALLBACK_URL:
-    raise RuntimeError("CALLBACK_URL missing")
 
 SUNO_BASE = "https://api.kie.ai/api/v1"
 GENERATE_URL = f"{SUNO_BASE}/generate"
+RECORD_URL = f"{SUNO_BASE}/generate/record-info"
 
-app = FastAPI(title="AI Music FULL API", version="FINAL")
+app = FastAPI(
+    title="AI Music Generator FULL (Polling)",
+    version="PRODUCTION"
+)
 
 # ================= DB =================
 def db():
@@ -47,12 +48,13 @@ def init_db():
 @app.get("/")
 def root():
     return {
-        "service": "AI Music FULL",
-        "flow": "generate → callback → database → download",
+        "service": "AI Music FULL API",
+        "mode": "generate → polling → database → download",
         "endpoints": [
+            "/health",
             "/generate",
-            "/callback",
             "/tasks",
+            "/tasks/{task_id}",
             "/download/{task_id}",
             "/db-check"
         ]
@@ -62,38 +64,50 @@ def root():
 def health():
     return {"status": "ok"}
 
-# ================= GENERATE =================
+# ================= GENERATE + POLLING =================
 @app.post("/generate")
 async def generate(req: dict):
+    headers = {
+        "Authorization": f"Bearer {SUNO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
     body = {
         "prompt": req.get("prompt"),
         "style": req.get("style"),
         "title": req.get("title"),
         "instrumental": req.get("instrumental", False),
         "customMode": True,
-        "model": "V4_5",
-        "callBackUrl": CALLBACK_URL
+        "model": "V4_5"
     }
 
-    headers = {
-        "Authorization": f"Bearer {SUNO_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
+    # 1️⃣ GENERATE
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(GENERATE_URL, headers=headers, json=body)
+        gen = r.json()
 
-    return r.json()
-
-# ================= CALLBACK =================
-@app.post("/callback")
-async def callback(request: Request):
-    data = await request.json()
-    task_id = data.get("taskId")
-
+    task_id = gen.get("taskId")
     if not task_id:
-        return {"status": "ignored"}
+        raise HTTPException(500, "Failed to get taskId from Suno")
 
+    # 2️⃣ POLLING (MAX ±2 MENIT)
+    data = None
+    for _ in range(20):  # 20 x 6 detik = 120 detik
+        await asyncio.sleep(6)
+        async with httpx.AsyncClient(timeout=20) as c:
+            info = await c.get(
+                RECORD_URL,
+                headers=headers,
+                params={"taskId": task_id}
+            )
+        data = info.json()
+        if data.get("status") == "completed":
+            break
+
+    if not data:
+        raise HTTPException(500, "Polling failed")
+
+    # 3️⃣ SIMPAN DATABASE
     c = db()
     cur = c.cursor()
     cur.execute("""
@@ -114,7 +128,11 @@ async def callback(request: Request):
     cur.close()
     c.close()
 
-    return {"status": "saved", "task_id": task_id}
+    return {
+        "task_id": task_id,
+        "status": data.get("status"),
+        "audio_url": data.get("audioUrl")
+    }
 
 # ================= DATA =================
 @app.get("/tasks")
@@ -127,6 +145,19 @@ def tasks():
     c.close()
     return rows
 
+@app.get("/tasks/{task_id}")
+def task(task_id: str):
+    c = db()
+    cur = c.cursor()
+    cur.execute("SELECT * FROM music_tasks WHERE task_id=%s", (task_id,))
+    row = cur.fetchone()
+    cur.close()
+    c.close()
+    if not row:
+        raise HTTPException(404, "Not found")
+    return row
+
+# ================= DOWNLOAD =================
 @app.get("/download/{task_id}")
 def download(task_id: str):
     c = db()
@@ -144,6 +175,7 @@ def download(task_id: str):
         "download_url": row["audio_url"]
     }
 
+# ================= DB CHECK =================
 @app.get("/db-check")
 def db_check():
     c = db()
@@ -152,7 +184,6 @@ def db_check():
     total = cur.fetchone()["total"]
     cur.close()
     c.close()
-
     return {
         "database": "connected",
         "total_records": total
