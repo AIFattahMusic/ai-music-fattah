@@ -32,7 +32,7 @@ class GenerateMusicRequest(BaseModel):
     style: Optional[str] = None
     title: Optional[str] = None
     instrumental: bool = False
-    customMode: bool = True
+    customMode: bool = False
     model: str = "V4_5"
 
 # ================= HELPERS =================
@@ -107,3 +107,4 @@ async def callback(request: Request):
     data = await request.json()
     print("SUNO CALLBACK:", data)
     return {"status": "received"}
+
