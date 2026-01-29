@@ -4,9 +4,6 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 
-# =====================================================
-# CONFIG (ENV)
-# =====================================================
 SUNO_API_KEY = os.getenv("SUNO_API_KEY")
 
 BASE_URL = os.getenv(
@@ -17,26 +14,16 @@ BASE_URL = os.getenv(
 CALLBACK_URL = f"{BASE_URL}/callback"
 
 SUNO_BASE_API = "https://api.kie.ai/api/v1"
-
 STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
 MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
 RECORD_INFO_URL = f"{SUNO_BASE_API}/generate/record-info"
 
-if not SUNO_API_KEY:
-    raise RuntimeError("SUNO_API_KEY environment variable is required")
-
-# =====================================================
-# FASTAPI APP
-# =====================================================
 app = FastAPI(
     title="AI Music Suno API Wrapper",
-    version="1.0.0",
-    description="Full FastAPI wrapper for Kie.ai Suno Music API"
+    version="1.0.1"
 )
 
-# =====================================================
-# MODELS
-# =====================================================
+# ================= MODELS =================
 class BoostStyleRequest(BaseModel):
     content: str
 
@@ -48,72 +35,42 @@ class GenerateMusicRequest(BaseModel):
     customMode: bool = True
     model: str = "V4_5"
 
-class RecordInfoResponse(BaseModel):
-    code: int
-    msg: str
-    data: Dict[str, Any]
-
-# =====================================================
-# HELPERS
-# =====================================================
+# ================= HELPERS =================
 def suno_headers():
+    if not SUNO_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="SUNO_API_KEY not set in environment"
+        )
     return {
         "Authorization": f"Bearer {SUNO_API_KEY}",
         "Content-Type": "application/json"
     }
 
-# =====================================================
-# ENDPOINTS
-# =====================================================
-
+# ================= ENDPOINTS =================
 @app.get("/")
 def root():
     return {
-        "service": "AI Music Suno API",
         "status": "running",
-        "endpoints": {
-            "boost_style": "POST /boost-style",
-            "generate_music": "POST /generate-music",
-            "record_info": "GET /record-info/{task_id}",
-            "callback": "POST /callback",
-            "health": "GET /health"
-        }
+        "service": "AI Music Suno API"
     }
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-# =====================================================
-# 1️⃣ BOOST MUSIC STYLE
-# =====================================================
 @app.post("/boost-style")
-async def boost_music_style(payload: BoostStyleRequest):
-    """
-    Boost / enhance music style description
-    """
+async def boost_style(payload: BoostStyleRequest):
     async with httpx.AsyncClient(timeout=60) as client:
         res = await client.post(
             STYLE_GENERATE_URL,
             headers=suno_headers(),
-            json={
-                "content": payload.content
-            }
+            json={"content": payload.content}
         )
-
-    if res.status_code != 200:
-        raise HTTPException(res.status_code, res.text)
-
     return res.json()
 
-# =====================================================
-# 2️⃣ GENERATE MUSIC
-# =====================================================
 @app.post("/generate-music")
 async def generate_music(payload: GenerateMusicRequest):
-    """
-    Generate music using Suno API (async task)
-    """
     body = {
         "prompt": payload.prompt,
         "customMode": payload.customMode,
@@ -124,7 +81,6 @@ async def generate_music(payload: GenerateMusicRequest):
 
     if payload.style:
         body["style"] = payload.style
-
     if payload.title:
         body["title"] = payload.title
 
@@ -134,49 +90,20 @@ async def generate_music(payload: GenerateMusicRequest):
             headers=suno_headers(),
             json=body
         )
-
-    if res.status_code != 200:
-        raise HTTPException(res.status_code, res.text)
-
     return res.json()
 
-# =====================================================
-# 3️⃣ GET RECORD INFO (Polling)
-# =====================================================
-@app.get("/record-info/{task_id}", response_model=RecordInfoResponse)
-async def get_record_info(task_id: str):
-    """
-    Get music generation result / status
-    """
+@app.get("/record-info/{task_id}")
+async def record_info(task_id: str):
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.get(
             RECORD_INFO_URL,
             headers=suno_headers(),
             params={"taskId": task_id}
         )
-
-    if res.status_code != 200:
-        raise HTTPException(res.status_code, res.text)
-
     return res.json()
 
-# =====================================================
-# 4️⃣ CALLBACK (WEBHOOK)
-# =====================================================
 @app.post("/callback")
-async def suno_callback(request: Request):
-    """
-    Receive async callback from Suno API
-    """
+async def callback(request: Request):
     data = await request.json()
-
-    # LOG ONLY (replace with DB if needed)
-    print("========== SUNO CALLBACK ==========")
-    print(data)
-    print("===================================")
-
-    return {
-        "status": "received",
-        "success": True
-    }
-
+    print("SUNO CALLBACK:", data)
+    return {"status": "received"}
