@@ -10,7 +10,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 BASE_URL = os.getenv("BASE_URL")  # contoh: https://ai-music-fattah.onrender.com
 
 if not SUNO_API_KEY or not DATABASE_URL or not BASE_URL:
-    raise RuntimeError("ENV SUNO_API_KEY, DATABASE_URL, BASE_URL wajib di-set")
+    raise RuntimeError("SUNO_API_KEY, DATABASE_URL, BASE_URL wajib di-set")
 
 SUNO_BASE = "https://api.kie.ai/api/v1"
 GENERATE_URL = f"{SUNO_BASE}/generate"
@@ -178,3 +178,4 @@ def db_check():
         "total_records": total,
         "latest": sample
     }
+
