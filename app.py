@@ -4,20 +4,24 @@ import psycopg2
 from fastapi import FastAPI, Request, HTTPException
 from psycopg2.extras import RealDictCursor
 
-# ================== CONFIG ==================
+# ================= CONFIG =================
 SUNO_API_KEY = os.getenv("SUNO_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-BASE_URL = os.getenv("BASE_URL")  # contoh: https://ai-music-fattah.onrender.com
+CALLBACK_URL = os.getenv("CALLBACK_URL")  # FIXED PUBLIC URL
 
-if not SUNO_API_KEY or not DATABASE_URL or not BASE_URL:
-    raise RuntimeError("SUNO_API_KEY, DATABASE_URL, BASE_URL wajib di-set")
+if not SUNO_API_KEY:
+    raise RuntimeError("SUNO_API_KEY missing")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL missing")
+if not CALLBACK_URL:
+    raise RuntimeError("CALLBACK_URL missing")
 
 SUNO_BASE = "https://api.kie.ai/api/v1"
 GENERATE_URL = f"{SUNO_BASE}/generate"
 
-app = FastAPI(title="AI Music FULL API", version="3.0.0")
+app = FastAPI(title="AI Music FULL API", version="FINAL")
 
-# ================== DB ==================
+# ================= DB =================
 def db():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
@@ -39,17 +43,16 @@ def init_db():
     cur.close()
     c.close()
 
-# ================== ROOT ==================
+# ================= ROOT =================
 @app.get("/")
 def root():
     return {
         "service": "AI Music FULL",
+        "flow": "generate → callback → database → download",
         "endpoints": [
-            "/health",
             "/generate",
             "/callback",
             "/tasks",
-            "/tasks/{task_id}",
             "/download/{task_id}",
             "/db-check"
         ]
@@ -59,7 +62,7 @@ def root():
 def health():
     return {"status": "ok"}
 
-# ================== GENERATE ==================
+# ================= GENERATE =================
 @app.post("/generate")
 async def generate(req: dict):
     body = {
@@ -69,7 +72,7 @@ async def generate(req: dict):
         "instrumental": req.get("instrumental", False),
         "customMode": True,
         "model": "V4_5",
-        "callBackUrl": f"{BASE_URL}/callback"
+        "callBackUrl": CALLBACK_URL
     }
 
     headers = {
@@ -82,7 +85,7 @@ async def generate(req: dict):
 
     return r.json()
 
-# ================== CALLBACK (AUTO SAVE) ==================
+# ================= CALLBACK =================
 @app.post("/callback")
 async def callback(request: Request):
     data = await request.json()
@@ -111,9 +114,9 @@ async def callback(request: Request):
     cur.close()
     c.close()
 
-    return {"status": "saved"}
+    return {"status": "saved", "task_id": task_id}
 
-# ================== LIST DATA ==================
+# ================= DATA =================
 @app.get("/tasks")
 def tasks():
     c = db()
@@ -124,19 +127,6 @@ def tasks():
     c.close()
     return rows
 
-@app.get("/tasks/{task_id}")
-def task(task_id: str):
-    c = db()
-    cur = c.cursor()
-    cur.execute("SELECT * FROM music_tasks WHERE task_id=%s", (task_id,))
-    row = cur.fetchone()
-    cur.close()
-    c.close()
-    if not row:
-        raise HTTPException(404, "Not found")
-    return row
-
-# ================== DOWNLOAD ==================
 @app.get("/download/{task_id}")
 def download(task_id: str):
     c = db()
@@ -154,28 +144,16 @@ def download(task_id: str):
         "download_url": row["audio_url"]
     }
 
-# ================== DB CHECK ==================
 @app.get("/db-check")
 def db_check():
     c = db()
     cur = c.cursor()
     cur.execute("SELECT COUNT(*) AS total FROM music_tasks")
     total = cur.fetchone()["total"]
-
-    cur.execute("""
-        SELECT task_id, status, audio_url, created_at
-        FROM music_tasks
-        ORDER BY created_at DESC
-        LIMIT 3
-    """)
-    sample = cur.fetchall()
-
     cur.close()
     c.close()
 
     return {
         "database": "connected",
-        "total_records": total,
-        "latest": sample
+        "total_records": total
     }
-
