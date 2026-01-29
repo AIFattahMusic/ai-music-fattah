@@ -1,109 +1,132 @@
 import os
-import httpx
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
+import json
+import psycopg2
+from fastapi import FastAPI, Request, HTTPException
+from psycopg2.extras import RealDictCursor
 
-SUNO_API_KEY = os.getenv("SUNO_API_KEY")
+# =====================================================
+# CONFIG
+# =====================================================
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-BASE_URL = os.getenv(
-    "BASE_URL",
-    "https://ai-music-fattah.onrender.com"
-)
-
-CALLBACK_URL = f"{BASE_URL}/callback"
-
-SUNO_BASE_API = "https://api.kie.ai/api/v1"
-STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
-MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
-RECORD_INFO_URL = f"{SUNO_BASE_API}/generate/record-info"
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
 
 app = FastAPI(
-    title="AI Music Suno API Wrapper",
-    version="1.0.1"
+    title="AI Music Database API",
+    version="1.0.0"
 )
 
-# ================= MODELS =================
-class BoostStyleRequest(BaseModel):
-    content: str
+# =====================================================
+# DATABASE CONNECTION
+# =====================================================
+def get_conn():
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=RealDictCursor
+    )
 
-class GenerateMusicRequest(BaseModel):
-    prompt: str
-    style: Optional[str] = None
-    title: Optional[str] = None
-    instrumental: bool = False
-    customMode: bool = True
-    model: str = "V4_5"
+# =====================================================
+# INIT TABLE (AUTO CREATE)
+# =====================================================
+@app.on_event("startup")
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS music_tasks (
+            id SERIAL PRIMARY KEY,
+            task_id TEXT UNIQUE,
+            status TEXT,
+            audio_url TEXT,
+            raw JSONB,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
-# ================= HELPERS =================
-def suno_headers():
-    if not SUNO_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="SUNO_API_KEY not set in environment"
-        )
-    return {
-        "Authorization": f"Bearer {SUNO_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-# ================= ENDPOINTS =================
-@app.get("/")
-def root():
-    return {
-        "status": "running",
-        "service": "AI Music Suno API"
-    }
-
+# =====================================================
+# HEALTH CHECK
+# =====================================================
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-@app.post("/boost-style")
-async def boost_style(payload: BoostStyleRequest):
-    async with httpx.AsyncClient(timeout=60) as client:
-        res = await client.post(
-            STYLE_GENERATE_URL,
-            headers=suno_headers(),
-            json={"content": payload.content}
-        )
-    return res.json()
+# =====================================================
+# SAVE CALLBACK DATA (DARI API GENERATE)
+# =====================================================
+@app.post("/save")
+async def save_task(request: Request):
+    data = await request.json()
 
-@app.post("/generate-music")
-async def generate_music(payload: GenerateMusicRequest):
-    body = {
-        "prompt": payload.prompt,
-        "customMode": payload.customMode,
-        "instrumental": payload.instrumental,
-        "model": payload.model,
-        "callBackUrl": CALLBACK_URL
+    task_id = data.get("taskId")
+    status = data.get("status")
+    audio_url = data.get("audioUrl")
+
+    if not task_id:
+        raise HTTPException(status_code=400, detail="taskId is required")
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO music_tasks (task_id, status, audio_url, raw)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (task_id)
+        DO UPDATE SET
+            status = EXCLUDED.status,
+            audio_url = EXCLUDED.audio_url,
+            raw = EXCLUDED.raw;
+    """, (
+        task_id,
+        status,
+        audio_url,
+        json.dumps(data)
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {
+        "status": "saved",
+        "taskId": task_id
     }
 
-    if payload.style:
-        body["style"] = payload.style
-    if payload.title:
-        body["title"] = payload.title
+# =====================================================
+# GET ALL TASKS (UNTUK ANDROID / ADMIN)
+# =====================================================
+@app.get("/tasks")
+def get_tasks():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT * FROM music_tasks
+        ORDER BY created_at DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        res = await client.post(
-            MUSIC_GENERATE_URL,
-            headers=suno_headers(),
-            json=body
-        )
-    return res.json()
+# =====================================================
+# GET TASK BY ID
+# =====================================================
+@app.get("/tasks/{task_id}")
+def get_task(task_id: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT * FROM music_tasks
+        WHERE task_id = %s
+    """, (task_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
 
-@app.get("/record-info/{task_id}")
-async def record_info(task_id: str):
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            RECORD_INFO_URL,
-            headers=suno_headers(),
-            params={"taskId": task_id}
-        )
-    return res.json()
+    if not row:
+        raise HTTPException(status_code=404, detail="Task not found")
 
-@app.post("/callback")
-async def callback(request: Request):
-    data = await request.json()
-    print("SUNO CALLBACK:", data)
-    return {"status": "received"}
+    return row
