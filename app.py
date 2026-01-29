@@ -1,132 +1,56 @@
 import os
-import json
-import psycopg2
+import httpx
 from fastapi import FastAPI, Request, HTTPException
-from psycopg2.extras import RealDictCursor
 
-# =====================================================
-# CONFIG
-# =====================================================
-DATABASE_URL = os.getenv("DATABASE_URL")
+SUNO_API_KEY = os.getenv("SUNO_API_KEY")
+DB_API_URL = "https://ai-music-fattah-1.onrender.com/save"
 
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set")
+SUNO_BASE = "https://api.kie.ai/api/v1"
+GENERATE_URL = f"{SUNO_BASE}/generate"
+RECORD_URL = f"{SUNO_BASE}/generate/record-info"
 
-app = FastAPI(
-    title="AI Music Database API",
-    version="1.0.0"
-)
+app = FastAPI(title="AI Music Generator")
 
-# =====================================================
-# DATABASE CONNECTION
-# =====================================================
-def get_conn():
-    return psycopg2.connect(
-        DATABASE_URL,
-        cursor_factory=RealDictCursor
-    )
+def headers():
+    if not SUNO_API_KEY:
+        raise HTTPException(500, "SUNO_API_KEY not set")
+    return {
+        "Authorization": f"Bearer {SUNO_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-# =====================================================
-# INIT TABLE (AUTO CREATE)
-# =====================================================
-@app.on_event("startup")
-def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS music_tasks (
-            id SERIAL PRIMARY KEY,
-            task_id TEXT UNIQUE,
-            status TEXT,
-            audio_url TEXT,
-            raw JSONB,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
-
-# =====================================================
-# HEALTH CHECK
-# =====================================================
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-# =====================================================
-# SAVE CALLBACK DATA (DARI API GENERATE)
-# =====================================================
-@app.post("/save")
-async def save_task(request: Request):
-    data = await request.json()
-
-    task_id = data.get("taskId")
-    status = data.get("status")
-    audio_url = data.get("audioUrl")
-
-    if not task_id:
-        raise HTTPException(status_code=400, detail="taskId is required")
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO music_tasks (task_id, status, audio_url, raw)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (task_id)
-        DO UPDATE SET
-            status = EXCLUDED.status,
-            audio_url = EXCLUDED.audio_url,
-            raw = EXCLUDED.raw;
-    """, (
-        task_id,
-        status,
-        audio_url,
-        json.dumps(data)
-    ))
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return {
-        "status": "saved",
-        "taskId": task_id
+@app.post("/generate-music")
+async def generate_music(req: dict):
+    body = {
+        "prompt": req.get("prompt"),
+        "style": req.get("style"),
+        "title": req.get("title"),
+        "instrumental": req.get("instrumental", False),
+        "customMode": True,
+        "model": "V4_5",
+        "callBackUrl": "https://ai-music-fattah.onrender.com/callback"
     }
 
-# =====================================================
-# GET ALL TASKS (UNTUK ANDROID / ADMIN)
-# =====================================================
-@app.get("/tasks")
-def get_tasks():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT * FROM music_tasks
-        ORDER BY created_at DESC
-    """)
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return rows
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post(GENERATE_URL, headers=headers(), json=body)
 
-# =====================================================
-# GET TASK BY ID
-# =====================================================
-@app.get("/tasks/{task_id}")
-def get_task(task_id: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT * FROM music_tasks
-        WHERE task_id = %s
-    """, (task_id,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
+    return r.json()
 
-    if not row:
-        raise HTTPException(status_code=404, detail="Task not found")
+@app.get("/record-info/{task_id}")
+async def record_info(task_id: str):
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(RECORD_URL, headers=headers(), params={"taskId": task_id})
+    return r.json()
 
-    return row
+@app.post("/callback")
+async def callback(request: Request):
+    data = await request.json()
+
+    async with httpx.AsyncClient(timeout=20) as c:
+        await c.post(DB_API_URL, json=data)
+
+    return {"status": "saved_to_database"}
