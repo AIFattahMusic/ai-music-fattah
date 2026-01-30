@@ -190,3 +190,28 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
+@app.post("/generate")
+def generate_music(prompt: str):
+    r = requests.post(
+        SUNO_GENERATE_URL,
+        headers=suno_headers(),
+        json={"prompt": prompt}
+    )
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail=r.text)
+
+    res = r.json()
+
+    task_id = res.get("id") or res.get("task_id")
+
+    if not task_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not get task ID"
+        )
+
+    return {
+        "task_id": task_id
+    }
