@@ -30,47 +30,89 @@ app = FastAPI(
 # =========================
 # REQUEST MODEL
 # =========================
-class GenerateRequest(BaseModel):
-    model: str = "V4_5"
-    custom_mode: bool = False
-    gpt_description_prompt: str
-    tags: Optional[str] = ""
+class BoostStyleRequest(BaseModel):
+    content: str
 
-# =========================
-# ENDPOINT 1: GENERATE FULL SONG
-# =========================
-@app.post("/generate/full-song")
-def generate_full_song(data: GenerateRequest):
-    payload = {
-        "mv": data.mv,
-        "custom_mode": data.custom_mode,
-        "gpt_description_prompt": data.gpt_description_prompt,
-        "tags": data.tags
+class GenerateMusicRequest(BaseModel):
+    prompt: str
+    style: Optional[str] = None
+    title: Optional[str] = None
+    instrumental: bool = False
+    customMode: bool = False
+    model: str = "V4_5"
+
+# ================= HELPERS =================
+def suno_headers():
+    if not SUNO_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="SUNO_API_KEY not set in environment"
+        )
+    return {
+        "Authorization": f"Bearer {SUNO_API_KEY}",
+        "Content-Type": "application/json"
     }
 
-    try:
-        r = requests.post(SUNOAPI_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
+# ================= ENDPOINTS =================
+@app.get("/")
+def root():
+    return {
+        "status": "running",
+        "service": "AI Music Suno API"
+    }
 
-        # kalau error dari SunoAPI, tampilkan jelas
-        if r.status_code != 200:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
-        return r.json()
+@app.post("/boost-style")
+async def boost_style(payload: BoostStyleRequest):
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            STYLE_GENERATE_URL,
+            headers=suno_headers(),
+            json={"content": payload.content}
+        )
+    return res.json()
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    try:
-        r = requests.post(SUNO_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
+@app.post("/generate-music")
+async def generate_music(payload: GenerateMusicRequest):
+    body = {
+        "prompt": payload.prompt,
+        "customMode": payload.customMode,
+        "instrumental": payload.instrumental,
+        "model": payload.model,
+        "callBackUrl": CALLBACK_URL
+    }
 
-        # kalau error dari SunoAPI, tampilkan jelas
-        if r.status_code != 200:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
+    if payload.style:
+        body["style"] = payload.style
+    if payload.title:
+        body["title"] = payload.title
 
-        return r.json()
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            MUSIC_GENERATE_URL,
+            headers=suno_headers(),
+            json=body
+        )
+    return res.json()
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/record-info/{task_id}")
+async def record_info(task_id: str):
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(
+            RECORD_INFO_URL,
+            headers=suno_headers(),
+            params={"taskId": task_id}
+        )
+    return res.json()
 
+@app.post("/callback")
+async def callback(request: Request):
+    data = await request.json()
+    print("SUNO CALLBACK:", data)
+    return {"status": "received"}
 
 # =========================
 # ENDPOINT 2: CEK STATUS TASK
@@ -118,6 +160,7 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
 
 
