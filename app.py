@@ -1,7 +1,7 @@
 import os
 import httpx
 import requests
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import psycopg2
@@ -19,12 +19,12 @@ CALLBACK_URL = f"{BASE_URL}/callback"
 SUNO_BASE_API = "https://api.kie.ai/api/v1"
 STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
 MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
-SUNO_STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
+STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
 
 # ================= APP =================
 app = FastAPI(
     title="AI Music Suno API Wrapper",
-    version="1.0.1"
+    version="1.0.2"
 )
 
 # ================= MODELS =================
@@ -33,8 +33,8 @@ class BoostStyleRequest(BaseModel):
 
 class GenerateMusicRequest(BaseModel):
     prompt: str
-    style: Optional[str] = None
-    title: Optional[str] = None
+    style: str
+    title: str
     instrumental: bool = False
     customMode: bool = False
     model: str = "V4_5"
@@ -44,22 +44,22 @@ def suno_headers():
     if not SUNO_API_KEY:
         raise HTTPException(
             status_code=500,
-            detail="SUNO_API_KEY not set in environment"
+            detail="SUNO_API_KEY not set"
         )
     return {
         "Authorization": f"Bearer {SUNO_API_KEY}",
         "Content-Type": "application/json"
     }
 
-# ================= ENDPOINTS =================
+# ================= ROOT =================
 @app.get("/")
 def root():
     return {
         "status": "running",
-        "service": "AI Music Suno API"
+        "service": "AI Music Suno API Wrapper"
     }
 
-
+# ================= BOOST STYLE =================
 @app.post("/boost-style")
 async def boost_style(payload: BoostStyleRequest):
     async with httpx.AsyncClient(timeout=60) as client:
@@ -70,6 +70,7 @@ async def boost_style(payload: BoostStyleRequest):
         )
     return res.json()
 
+# ================= GENERATE MUSIC =================
 @app.post("/generate-music")
 async def generate_music(payload: GenerateMusicRequest):
     body = {
@@ -92,6 +93,9 @@ async def generate_music(payload: GenerateMusicRequest):
             json=body
         )
 
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail=res.text)
+
     data = res.json()
 
     task_id = (
@@ -102,71 +106,62 @@ async def generate_music(payload: GenerateMusicRequest):
     )
 
     if not task_id:
-        raise HTTPException(status_code=500, detail="task_id not found")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "task_id not found",
+                "response": data
+            }
+        )
 
     return {
-        "task_id": task_id,
-        "raw": data
+        "task_id": task_id
     }
 
-
-
-# =========================
-# CEK STATUS TASK
-# =========================
-@app.get("/generate/status/{task_id}")
-def generate_status(task_id: str):
+# ================= STATUS (NYAMBUNG DENGAN generate-music) =================
+@app.get("/generate-music/status/{task_id}")
+def generate_music_status(task_id: str):
     r = requests.get(
-        f"{SUNO_STATUS_URL}/{task_id}",
-        headers=suno_headers()
+        f"{STATUS_URL}/{task_id}",
+        headers=suno_headers(),
+        timeout=30
     )
 
     if r.status_code != 200:
         raise HTTPException(status_code=404, detail=r.text)
 
     res = r.json()
+    data = res.get("data")
 
-    item = None
-    if isinstance(res.get("data"), list) and len(res["data"]) > 0:
-        item = res["data"][0]
+    if not data:
+        return {"status": "processing"}
 
-    if not item:
-        return {
-            "status": "processing",
-            "result": res
-        }
-
-    state = item.get("state") or item.get("status")
+    status = data.get("status") or data.get("state")
     audio_url = (
-        item.get("audio_url")
-        or item.get("audioUrl")
-        or item.get("audio")
+        data.get("audio_url")
+        or data.get("audioUrl")
+        or data.get("audio")
     )
 
-    if state in ["pending", "running"]:
-        return {
-            "status": "processing",
-            "message": "Task still processing"
-        }
+    if status in ["pending", "running"]:
+        return {"status": "processing"}
 
-    if state == "failed":
+    if status == "failed":
         raise HTTPException(status_code=500, detail="Generation failed")
 
-    if state == "succeeded" and audio_url:
+    if status == "succeeded" and audio_url:
         return {
             "status": "done",
             "audio_url": audio_url,
-            "result": item
+            "result": data
         }
 
     return {
         "status": "processing",
-        "result": item
+        "result": data
     }
 
-# =========================
-# DB TEST
-# =========================
+# ================= DB TEST =================
 def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
