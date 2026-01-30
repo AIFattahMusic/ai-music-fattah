@@ -113,7 +113,7 @@ async def callback(request: Request):
 # =========================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
-    r = requests.get(f"{MUSICAPI_STATUS_URL}/{task_id}", headers=HEADERS)
+    r = requests.get(f"{SUNO_STATUS_URL}/{task_id}", headers=HEADERS)
 
     if r.status_code != 200:
         raise HTTPException(status_code=404, detail=r.text)
@@ -154,3 +154,4 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
