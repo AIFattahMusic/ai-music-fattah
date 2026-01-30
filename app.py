@@ -139,11 +139,17 @@ def generate_status(task_id: str):
     state = item.get("state") or item.get("status")
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
-    # kalau sudah selesai dan ada audio
-    if state == "succeeded" and audio_url:
-        return {"status": "done", "audio_url": audio_url, "result": item}
+    if state in ["PENDING", "PROCESSING", "RUNNING"]:
+    return {
+        "status": state,
+        "message": "Task still processing"
+    }
 
-    return {"status": "processing", "result": item}
+if state == "FAILED":
+    raise HTTPException(status_code=500, detail="Generation failed")
+
+if state == "COMPLETED":
+    return result
 
 import os, psycopg2
 
@@ -162,6 +168,7 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
 
 
