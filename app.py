@@ -1,9 +1,12 @@
 import os
 import httpx
+import requests
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional
+import psycopg2
 
+# ================= ENV =================
 SUNO_API_KEY = os.getenv("SUNO_API_KEY")
 
 BASE_URL = os.getenv(
@@ -16,8 +19,9 @@ CALLBACK_URL = f"{BASE_URL}/callback"
 SUNO_BASE_API = "https://api.kie.ai/api/v1"
 STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
 MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
-RECORD_INFO_URL = f"{SUNO_BASE_API}/generate/record-info"
+SUNO_STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
 
+# ================= APP =================
 app = FastAPI(
     title="AI Music Suno API Wrapper",
     version="1.0.1"
@@ -90,9 +94,9 @@ async def generate_music(payload: GenerateMusicRequest):
             headers=suno_headers(),
             json=body
         )
+
     data = res.json()
 
-    # 🔑 AMBIL TASK ID DARI SUNO
     task_id = (
         data.get("task_id")
         or data.get("taskId")
@@ -103,12 +107,10 @@ async def generate_music(payload: GenerateMusicRequest):
     if not task_id:
         raise HTTPException(status_code=500, detail="task_id not found")
 
-    # 🔥 KIRIM FORMAT YANG ANDROID BUTUHKAN
     return {
         "task_id": task_id,
         "raw": data
     }
-    return res.json()
 
 @app.post("/callback")
 async def callback(request: Request):
@@ -117,58 +119,64 @@ async def callback(request: Request):
     return {"status": "received"}
 
 # =========================
-# ENDPOINT 2: CEK STATUS TASK
+# CEK STATUS TASK
 # =========================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
-    r = requests.get(f"{SUNO_STATUS_URL}/{task_id}", headers=HEADERS)
+    r = requests.get(
+        f"{SUNO_STATUS_URL}/{task_id}",
+        headers=suno_headers()
+    )
 
     if r.status_code != 200:
         raise HTTPException(status_code=404, detail=r.text)
 
     res = r.json()
 
-    # ambil data item pertama
     item = None
     if isinstance(res.get("data"), list) and len(res["data"]) > 0:
         item = res["data"][0]
 
     if not item:
-        return {"status": "processing", "result": res}
+        return {
+            "status": "processing",
+            "result": res
+        }
 
     state = item.get("state") or item.get("status")
-audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
+    audio_url = (
+        item.get("audio_url")
+        or item.get("audioUrl")
+        or item.get("audio")
+    )
 
-if state in ["pending", "running"]:
+    if state in ["pending", "running"]:
+        return {
+            "status": "processing",
+            "message": "Task still processing"
+        }
+
+    if state == "failed":
+        raise HTTPException(status_code=500, detail="Generation failed")
+
+    if state == "succeeded" and audio_url:
+        return {
+            "status": "done",
+            "audio_url": audio_url,
+            "result": item
+        }
+
     return {
         "status": "processing",
-        "message": "Task still processing"
-    }
-
-if state == "failed":
-    raise HTTPException(status_code=500, detail="Generation failed")
-
-if state == "succeeded" and audio_url:
-    return {
-        "status": "done",
-        "audio_url": audio_url,
         "result": item
     }
 
-return {
-    "status": "processing",
-    "result": item
-}
-if state == "FAILED":
-    raise HTTPException(status_code=500, detail="Generation failed")
-
-if state == "COMPLETED":
-    return result
-
-import os, psycopg2
-
+# =========================
+# DB TEST
+# =========================
 def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
+
 @app.get("/db-all")
 def db_all():
     conn = get_conn()
@@ -182,12 +190,3 @@ def db_all():
     cur.close()
     conn.close()
     return rows
-
-
-
-
-
-
-
-
-
