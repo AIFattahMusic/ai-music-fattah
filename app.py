@@ -2,7 +2,7 @@ import os
 import httpx
 import requests
 import psycopg2
-
+from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -163,3 +163,4 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 @app.get("/")
 def root():
     return {"ok": True}
+
