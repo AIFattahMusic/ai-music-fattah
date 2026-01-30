@@ -59,9 +59,6 @@ def root():
         "service": "AI Music Suno API"
     }
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
 
 @app.post("/boost-style")
 async def boost_style(payload: BoostStyleRequest):
@@ -112,11 +109,7 @@ async def generate_music(payload: GenerateMusicRequest):
         "raw": data
     }
 
-@app.post("/callback")
-async def callback(request: Request):
-    data = await request.json()
-    print("SUNO CALLBACK:", data)
-    return {"status": "received"}
+
 
 # =========================
 # CEK STATUS TASK
@@ -190,28 +183,3 @@ def db_all():
     cur.close()
     conn.close()
     return rows
-
-@app.post("/generate")
-def generate_music(prompt: str):
-    r = requests.post(
-        SUNO_GENERATE_URL,
-        headers=suno_headers(),
-        json={"prompt": prompt}
-    )
-
-    if r.status_code != 200:
-        raise HTTPException(status_code=500, detail=r.text)
-
-    res = r.json()
-
-    task_id = res.get("id") or res.get("task_id")
-
-    if not task_id:
-        raise HTTPException(
-            status_code=500,
-            detail="Could not get task ID"
-        )
-
-    return {
-        "task_id": task_id
-    }
