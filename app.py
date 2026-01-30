@@ -157,3 +157,9 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
+app.mount("/media", StaticFiles(directory="media"), name="media")
+
+@app.get("/")
+def root():
+    return {"ok": True}
