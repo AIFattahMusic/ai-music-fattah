@@ -108,3 +108,34 @@ async def callback(request: Request):
     print("SUNO CALLBACK:", data)
     return {"status": "received"}
 
+# ambil data item pertama
+
+    item = None
+
+    if isinstance(res.get("data"), list) and len(res["data"]) > 0:
+
+        item = res["data"][0]
+
+
+
+    if not item:
+
+        return {"status": "processing", "result": res}
+
+
+
+    state = item.get("state") or item.get("status")
+
+    audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
+
+
+
+    # kalau sudah selesai dan ada audio
+
+    if state == "succeeded" and audio_url:
+
+        return {"status": "done", "audio_url": audio_url, "result": item}
+
+
+
+    return {"status": "processing", "result": item}
