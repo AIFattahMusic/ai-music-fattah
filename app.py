@@ -108,34 +108,49 @@ async def callback(request: Request):
     print("SUNO CALLBACK:", data)
     return {"status": "received"}
 
-# ambil data item pertama
+# =========================
+# ENDPOINT 2: CEK STATUS TASK
+# =========================
+@app.get("/generate/status/{task_id}")
+def generate_status(task_id: str):
+    r = requests.get(f"{MUSICAPI_STATUS_URL}/{task_id}", headers=HEADERS)
 
+    if r.status_code != 200:
+        raise HTTPException(status_code=404, detail=r.text)
+
+    res = r.json()
+
+    # ambil data item pertama
     item = None
-
     if isinstance(res.get("data"), list) and len(res["data"]) > 0:
-
         item = res["data"][0]
 
-
-
     if not item:
-
         return {"status": "processing", "result": res}
 
-
-
     state = item.get("state") or item.get("status")
-
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
-
-
     # kalau sudah selesai dan ada audio
-
     if state == "succeeded" and audio_url:
-
         return {"status": "done", "audio_url": audio_url, "result": item}
 
-
-
     return {"status": "processing", "result": item}
+
+import os, psycopg2
+
+def get_conn():
+    return psycopg2.connect(os.environ["DATABASE_URL"])
+@app.get("/db-all")
+def db_all():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT *
+        FROM information_schema.tables
+        WHERE table_schema = 'public';
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
