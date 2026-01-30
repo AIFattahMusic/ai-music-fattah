@@ -32,7 +32,7 @@ class GenerateMusicRequest(BaseModel):
     style: Optional[str] = None
     title: Optional[str] = None
     instrumental: bool = False
-    customMode: bool = False
+    customMode: bool = True
     model: str = "V4_5"
 
 # ================= HELPERS =================
@@ -162,5 +162,6 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
 
