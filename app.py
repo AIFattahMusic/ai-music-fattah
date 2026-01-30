@@ -51,13 +51,6 @@ def suno_headers():
         "Content-Type": "application/json"
     }
 
-# ================= ROOT =================
-@app.get("/")
-def root():
-    return {
-        "status": "running",
-        "service": "AI Music Suno API Wrapper"
-    }
 
 # ================= BOOST STYLE =================
 @app.post("/boost-style")
@@ -71,120 +64,56 @@ async def boost_style(payload: BoostStyleRequest):
     return res.json()
 
 # ================= GENERATE MUSIC =================
-@app.post("/generate-music")
-async def generate_music(payload: GenerateMusicRequest):
-    body = {
-        "prompt": payload.prompt,
-        "customMode": payload.customMode,
-        "instrumental": payload.instrumental,
-        "model": payload.model,
-        "callBackUrl": CALLBACK_URL
+@app.post("/generate/full-song")
+def generate_full_song(data: GenerateRequest):
+    payload = {
+        "mv": data.mv,
+        "custom_mode": data.custom_mode,
+        "gpt_description_prompt": data.gpt_description_prompt,
+        "tags": data.tags
     }
 
-    if payload.style:
-        body["style"] = payload.style
-    if payload.title:
-        body["title"] = payload.title
+    try:
+        r = requests.post(SUNO_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        res = await client.post(
-            MUSIC_GENERATE_URL,
-            headers=suno_headers(),
-            json=body
-        )
+        # kalau error dari SunoAPI, tampilkan jelas
+        if r.status_code != 200:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
 
-    if res.status_code != 200:
-        raise HTTPException(status_code=500, detail=res.text)
+        return r.json()
 
-    data = res.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    task_id = (
-        data.get("task_id")
-        or data.get("taskId")
-        or data.get("id")
-        or data.get("data", {}).get("taskId")
-    )
 
-    if not task_id:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "task_id not found",
-                "response": data
-            }
-        )
-
-    return {
-        "task_id": task_id
-    }
-
-# ================= STATUS (NYAMBUNG DENGAN generate-music) =================
-@app.get("/generate-music/status/{task_id}")
-def generate_music_status(task_id: str):
-    r = requests.post(
-        "https://api.kie.ai/api/v1/generate/record/info",
-        headers=suno_headers(),
-        json={"ids": [task_id]},
-        timeout=30
-    )
+# =========================
+# ENDPOINT 2: CEK STATUS TASK
+# =========================
+@app.get("/generate/status/{task_id}")
+def generate_status(task_id: str):
+    r = requests.get(f"{SUNO_STATUS_URL}/{task_id}", headers=HEADERS)
 
     if r.status_code != 200:
-        raise HTTPException(status_code=500, detail=r.text)
+        raise HTTPException(status_code=404, detail=r.text)
 
     res = r.json()
-    data = res.get("data")
 
-    if not data or len(data) == 0:
-        return {"status": "processing"}
+    # ambil data item pertama
+    item = None
+    if isinstance(res.get("data"), list) and len(res["data"]) > 0:
+        item = res["data"][0]
 
-    item = data[0]
+    if not item:
+        return {"status": "processing", "result": res}
 
-    status = item.get("state") or item.get("status")
+    state = item.get("state") or item.get("status")
+    audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
-    audio_url = (
-        item.get("audio_url")
-        or item.get("audioUrl")
-        or item.get("audio")
-    )
+    # kalau sudah selesai dan ada audio
+    if state == "succeeded" and audio_url:
+        return {"status": "done", "audio_url": audio_url, "result": item}
 
-    image_url = (
-        item.get("image_url")
-        or item.get("imageUrl")
-        or item.get("cover_url")
-        or item.get("coverUrl")
-    )
-
-    lyrics = (
-        item.get("lyrics")
-        or item.get("lyric")
-        or item.get("prompt")
-    )
-
-    title = item.get("title")
-
-    if status in ["pending", "running"]:
-        return {
-            "status": "processing",
-            "title": title
-        }
-
-    if status == "failed":
-        raise HTTPException(status_code=500, detail="Generation failed")
-
-    if status == "succeeded":
-        return {
-            "status": "done",
-            "title": title,
-            "audio_url": audio_url,
-            "image_url": image_url,
-            "lyrics": lyrics,
-            "raw": item
-        }
-
-    return {
-        "status": "processing",
-        "raw": item
-    }
+    return {"status": "processing", "result": item}
 
 # ================= DB TEST =================
 def get_conn():
@@ -203,4 +132,5 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
