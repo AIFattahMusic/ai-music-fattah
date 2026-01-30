@@ -113,7 +113,6 @@ async def callback(request: Request):
     data = await request.json()
     print("SUNO CALLBACK:", data)
     return {"status": "received"}
-
 # =========================
 # ENDPOINT 2: CEK STATUS TASK
 # =========================
@@ -160,6 +159,7 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
 
 
