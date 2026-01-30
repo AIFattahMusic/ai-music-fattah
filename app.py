@@ -121,44 +121,69 @@ async def generate_music(payload: GenerateMusicRequest):
 # ================= STATUS (NYAMBUNG DENGAN generate-music) =================
 @app.get("/generate-music/status/{task_id}")
 def generate_music_status(task_id: str):
-    r = requests.get(
-        f"{STATUS_URL}/{task_id}",
+    r = requests.post(
+        "https://api.kie.ai/api/v1/generate/record/info",
         headers=suno_headers(),
+        json={"ids": [task_id]},
         timeout=30
     )
 
     if r.status_code != 200:
-        raise HTTPException(status_code=404, detail=r.text)
+        raise HTTPException(status_code=500, detail=r.text)
 
     res = r.json()
     data = res.get("data")
 
-    if not data:
+    if not data or len(data) == 0:
         return {"status": "processing"}
 
-    status = data.get("status") or data.get("state")
+    item = data[0]
+
+    status = item.get("state") or item.get("status")
+
     audio_url = (
-        data.get("audio_url")
-        or data.get("audioUrl")
-        or data.get("audio")
+        item.get("audio_url")
+        or item.get("audioUrl")
+        or item.get("audio")
     )
 
+    image_url = (
+        item.get("image_url")
+        or item.get("imageUrl")
+        or item.get("cover_url")
+        or item.get("coverUrl")
+    )
+
+    lyrics = (
+        item.get("lyrics")
+        or item.get("lyric")
+        or item.get("prompt")
+    )
+
+    title = item.get("title")
+
     if status in ["pending", "running"]:
-        return {"status": "processing"}
+        return {
+            "status": "processing",
+            "title": title
+        }
 
     if status == "failed":
         raise HTTPException(status_code=500, detail="Generation failed")
 
-    if status == "succeeded" and audio_url:
+    if status == "succeeded":
         return {
             "status": "done",
+            "title": title,
             "audio_url": audio_url,
-            "result": data
+            "image_url": image_url,
+            "lyrics": lyrics,
+            "raw": item
         }
 
     return {
         "status": "processing",
-        "result": data
+        "raw": item
     }
 
 # ================= DB TEST =================
@@ -178,3 +203,4 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
