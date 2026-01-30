@@ -90,16 +90,24 @@ async def generate_music(payload: GenerateMusicRequest):
             headers=suno_headers(),
             json=body
         )
-    return res.json()
+    data = res.json()
 
-@app.get("/record-info/{task_id}")
-async def record_info(task_id: str):
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            RECORD_INFO_URL,
-            headers=suno_headers(),
-            params={"taskId": task_id}
-        )
+    # 🔑 AMBIL TASK ID DARI SUNO
+    task_id = (
+        data.get("task_id")
+        or data.get("taskId")
+        or data.get("id")
+        or data.get("data", {}).get("taskId")
+    )
+
+    if not task_id:
+        raise HTTPException(status_code=500, detail="task_id not found")
+
+    # 🔥 KIRIM FORMAT YANG ANDROID BUTUHKAN
+    return {
+        "task_id": task_id,
+        "raw": data
+    }
     return res.json()
 
 @app.post("/callback")
@@ -154,4 +162,5 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
