@@ -1,10 +1,11 @@
 import os
 import httpx
 import requests
-from fastapi import FastAPI, HTTPException
+import psycopg2
+
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import psycopg2
 
 # ================= ENV =================
 SUNO_API_KEY = os.getenv("SUNO_API_KEY")
@@ -56,10 +57,7 @@ def suno_headers():
 # ================= ENDPOINTS =================
 @app.get("/")
 def root():
-    return {
-        "status": "running",
-        "service": "AI Music Suno API"
-    }
+    return {"status": "running", "service": "AI Music Suno API"}
 
 @app.get("/health")
 def health():
@@ -102,7 +100,7 @@ async def generate_music(payload: GenerateMusicRequest):
 async def record_info(task_id: str):
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.get(
-            RECORD_INFO_URL,
+            STATUS_URL,
             headers=suno_headers(),
             params={"taskId": task_id}
         )
@@ -113,19 +111,20 @@ async def callback(request: Request):
     data = await request.json()
     print("SUNO CALLBACK:", data)
     return {"status": "received"}
-# =========================
-# ENDPOINT 2: CEK STATUS TASK
-# =========================
+
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
-    r = requests.get(f"{SUNO_STATUS_URL}/{task_id}", headers=HEADERS)
+    r = requests.get(
+        STATUS_URL,
+        headers=suno_headers(),
+        params={"taskId": task_id}
+    )
 
     if r.status_code != 200:
         raise HTTPException(status_code=404, detail=r.text)
 
     res = r.json()
 
-    # ambil data item pertama
     item = None
     if isinstance(res.get("data"), list) and len(res["data"]) > 0:
         item = res["data"][0]
@@ -136,7 +135,6 @@ def generate_status(task_id: str):
     state = item.get("state") or item.get("status")
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
-    # kalau sudah selesai dan ada audio
     if state == "succeeded" and audio_url:
         return {"status": "done", "audio_url": audio_url, "result": item}
 
@@ -159,8 +157,3 @@ def db_all():
     cur.close()
     conn.close()
     return rows
-
-
-
-
-
