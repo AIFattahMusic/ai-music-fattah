@@ -136,8 +136,7 @@ def generate_status(task_id: str):
     if not item:
         return {"status": "processing", "result": res}
 
-    # status dari Suno
-state = item.get("state") or item.get("status")
+    state = item.get("state") or item.get("status")
 audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
 if state in ["pending", "running"]:
@@ -154,7 +153,12 @@ if state == "succeeded" and audio_url:
         "status": "done",
         "audio_url": audio_url,
         "result": item
-    
+    }
+
+return {
+    "status": "processing",
+    "result": item
+}
 if state == "FAILED":
     raise HTTPException(status_code=500, detail="Generation failed")
 
@@ -178,6 +182,7 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
 
 
