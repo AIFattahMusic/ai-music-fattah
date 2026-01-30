@@ -27,43 +27,18 @@ app = FastAPI(
     version="1.0.2"
 )
 
-# ================= MODELS =================
-class BoostStyleRequest(BaseModel):
-    content: str
-
-class GenerateMusicRequest(BaseModel):
-    prompt: str
-    style: str
-    title: str
-    instrumental: bool = False
-    customMode: bool = False
+# =========================
+# REQUEST MODEL
+# =========================
+class GenerateRequest(BaseModel):
     model: str = "V4_5"
+    custom_mode: bool = False
+    gpt_description_prompt: str
+    tags: Optional[str] = ""
 
-# ================= HELPERS =================
-def suno_headers():
-    if not SUNO_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="SUNO_API_KEY not set"
-        )
-    return {
-        "Authorization": f"Bearer {SUNO_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-
-# ================= BOOST STYLE =================
-@app.post("/boost-style")
-async def boost_style(payload: BoostStyleRequest):
-    async with httpx.AsyncClient(timeout=60) as client:
-        res = await client.post(
-            STYLE_GENERATE_URL,
-            headers=suno_headers(),
-            json={"content": payload.content}
-        )
-    return res.json()
-
-# ================= GENERATE MUSIC =================
+# =========================
+# ENDPOINT 1: GENERATE FULL SONG
+# =========================
 @app.post("/generate/full-song")
 def generate_full_song(data: GenerateRequest):
     payload = {
@@ -73,6 +48,17 @@ def generate_full_song(data: GenerateRequest):
         "tags": data.tags
     }
 
+    try:
+        r = requests.post(SUNOAPI_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
+
+        # kalau error dari SunoAPI, tampilkan jelas
+        if r.status_code != 200:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+
+        return r.json()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     try:
         r = requests.post(SUNO_CREATE_URL, headers=HEADERS, json=payload, timeout=60)
 
@@ -132,5 +118,6 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
 
 
