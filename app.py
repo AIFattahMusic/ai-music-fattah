@@ -136,7 +136,7 @@ def generate_status(task_id: str):
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
     if state == "succeeded" and audio_url:
-    audio_bytes = requests.get(audio_url).content   # ✅ TAMBAH INI
+        audio_bytes = requests.get(audio_url).content   # ✅ TAMBAH INI
 
     with open("/media/song_1.mp3", "wb") as f:
         f.write(audio_bytes)
@@ -171,5 +171,6 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 @app.get("/")
 def root():
     return {"ok": True}
+
 
 
