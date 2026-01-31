@@ -136,8 +136,16 @@ def generate_status(task_id: str):
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
     if state == "succeeded" and audio_url:
-        return {"status": "done", "audio_url": audio_url, "result": item}
+    audio_bytes = requests.get(audio_url).content   # ✅ TAMBAH INI
 
+    with open("/media/song_1.mp3", "wb") as f:
+        f.write(audio_bytes)
+
+    return {
+        "status": "done",
+        "audio_url": f"{BASE_URL}/media/song_1.mp3",  # ✅ URL LOKAL
+        "result": item
+    }
     return {"status": "processing", "result": item}
 
 # ================= DB TEST =================
@@ -163,4 +171,5 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 @app.get("/")
 def root():
     return {"ok": True}
+
 
