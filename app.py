@@ -133,19 +133,25 @@ def generate_status(task_id: str):
         return {"status": "processing", "result": res}
 
     state = item.get("state") or item.get("status")
-    audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
+    audio_url = (
+        item.get("audio_url")
+        or item.get("audioUrl")
+        or item.get("audio")
+    )
 
-    if  state == "succeeded" and audio_url:
-    audio_bytes = requests.get(audio_url).content
+    if state == "succeeded" and audio_url:
+        audio_bytes = requests.get(audio_url).content
 
-    with open("/media/song_1.mp3", "wb") as f:
-        f.write(audio_bytes)
+        with open("/media/song_1.mp3", "wb") as f:
+            f.write(audio_bytes)
 
-    return {
-        "status": "done",
-        "audio_url": f"{BASE_URL}/media/song_1.mp3",
-        "result": item
-    }
+        return {
+            "status": "done",
+            "audio_url": f"{BASE_URL}/media/song_1.mp3",
+            "result": item
+        }
+
+    return {"status": "processing", "result": item}
 
 return {"status": "processing", "result": item}
 # ================= DB TEST =================
@@ -171,6 +177,7 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 @app.get("/")
 def root():
     return {"ok": True}
+
 
 
 
