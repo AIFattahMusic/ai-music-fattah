@@ -13,7 +13,7 @@ from pydantic import BaseModel
 # ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 SUNO_API_KEY = os.environ.get("SUNO_API_KEY")
-BASE_URL = os.environ.get("BASE_URL")  # ex: https://ai-music-fattah-1.onrender.com
+BASE_URL = os.environ.get("BASE_URL")  # ex: https://ai-music-fattah.onrender.com
 
 if not DATABASE_URL or not SUNO_API_KEY or not BASE_URL:
     raise RuntimeError("ENV DATABASE_URL / SUNO_API_KEY / BASE_URL belum diset")
@@ -139,3 +139,4 @@ def status(task_id: str):
         "audio_url": row[3],
         "created_at": row[4]
     }
+
