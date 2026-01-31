@@ -130,3 +130,4 @@ def list_songs():
         }
         for r in rows
     ]
+
