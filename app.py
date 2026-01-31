@@ -153,7 +153,7 @@ def generate_status(task_id: str):
 
     return {"status": "processing", "result": item}
 
-return {"status": "processing", "result": item}
+
 # ================= DB TEST =================
 def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
@@ -177,6 +177,7 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 @app.get("/")
 def root():
     return {"ok": True}
+
 
 
 
