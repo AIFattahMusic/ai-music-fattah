@@ -135,7 +135,7 @@ def generate_status(task_id: str):
     state = item.get("state") or item.get("status")
     audio_url = item.get("audio_url") or item.get("audioUrl") or item.get("audio")
 
-    if state == "succeeded" and audio_url:
+  if state == "succeeded" and audio_url:
     audio_bytes = requests.get(audio_url).content
 
     with open("/media/song_1.mp3", "wb") as f:
@@ -147,8 +147,7 @@ def generate_status(task_id: str):
         "result": item
     }
 
-    return {"status": "processing", "result": item}
-
+return {"status": "processing", "result": item}
 # ================= DB TEST =================
 def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
@@ -172,6 +171,7 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 @app.get("/")
 def root():
     return {"ok": True}
+
 
 
 
