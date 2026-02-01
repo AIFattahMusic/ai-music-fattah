@@ -26,12 +26,11 @@ CALLBACK_URL = f"{BASE_URL}/callback"
 SUNO_BASE_API = "https://api.kie.ai/api/v1"
 STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
 MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
-STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
 
 # ================= APP =================
 app = FastAPI(
     title="AI Music Suno API Wrapper",
-    version="1.0.4"
+    version="2.0.0"
 )
 
 # ================= STATIC FILES =================
@@ -108,60 +107,30 @@ async def generate_music(payload: GenerateMusicRequest):
 
     return res.json()
 
-# ================= CALLBACK =================
+# ==================================================
+# 🔥 CALLBACK = SUMBER KEBENARAN (SAVE FILE + DB)
+# ==================================================
 @app.post("/callback")
 async def callback(request: Request):
     data = await request.json()
     print("SUNO CALLBACK:", data)
-    return {"status": "received"}
 
-# ================= STATUS → SAVE → DB =================
-@app.get("/generate/status/{task_id}")
-def generate_status(task_id: str):
-    r = requests.get(
-        STATUS_URL,
-        headers=suno_headers(),
-        params={"taskId": task_id}
-    )
+    record = data.get("data") or {}
+    record_id = record.get("recordId") or record.get("id")
+    audio_url = record.get("audioUrl") or record.get("audio_url")
+    title = record.get("title")
 
-    if r.status_code != 200:
-        raise HTTPException(status_code=404, detail=r.text)
-
-    res = r.json()
-
-    if not isinstance(res.get("data"), list) or not res["data"]:
-        return {"status": "processing", "step": "waiting_suno"}
-
-    item = res["data"][0]
-    state = item.get("state") or item.get("status")
-
-    audio_url = (
-        item.get("audio_url")
-        or item.get("audioUrl")
-        or item.get("audio")
-    )
-
-    if state != "succeeded":
-        return {
-            "status": "processing",
-            "step": "generating",
-            "state": state
-        }
-
-    if not audio_url:
-        return {
-            "status": "processing",
-            "step": "waiting_audio_url"
-        }
+    if not record_id or not audio_url:
+        return {"status": "ignored"}
 
     # ===== SAVE MP3 =====
-    file_path = f"media/{task_id}.mp3"
+    file_path = f"media/{record_id}.mp3"
     if not os.path.exists(file_path):
         audio_bytes = requests.get(audio_url).content
         with open(file_path, "wb") as f:
             f.write(audio_bytes)
 
-    local_audio_url = f"{BASE_URL}/media/{task_id}.mp3"
+    local_audio_url = f"{BASE_URL}/media/{record_id}.mp3"
 
     # ===== SAVE DATABASE =====
     conn = get_db_conn()
@@ -171,8 +140,8 @@ def generate_status(task_id: str):
         VALUES (%s, %s, %s)
         ON CONFLICT (task_id) DO NOTHING;
     """, (
-        task_id,
-        item.get("title"),
+        record_id,
+        title,
         local_audio_url
     ))
     conn.commit()
@@ -181,8 +150,7 @@ def generate_status(task_id: str):
 
     return {
         "status": "done",
-        "task_id": task_id,
-        "title": item.get("title"),
+        "task_id": record_id,
         "audio_url": local_audio_url
     }
 
@@ -210,29 +178,3 @@ def get_songs():
         }
         for r in rows
     ]
-
-# ================= DB COUNT (BUKTI KERAS) =================
-@app.get("/db-count")
-def db_count():
-    conn = get_db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM songs;")
-    count = cur.fetchone()[0]
-    cur.close()
-    conn.close()
-    return {"songs_count": count}
-
-# ================= DB TABLE LIST =================
-@app.get("/db-all")
-def db_all():
-    conn = get_db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public';
-    """)
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return rows
