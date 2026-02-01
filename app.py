@@ -86,54 +86,64 @@ async def boost_style(payload: BoostStyleRequest):
         )
     return res.json()
 
-@app.post("/generate-music")
-async def generate_music(payload: GenerateMusicRequest):
-    body = {
-        "prompt": payload.prompt,
-        "customMode": payload.customMode,
-        "instrumental": payload.instrumental,
-        "model": normalize_model(payload.model),
-        "callBackUrl": CALLBACK_URL
-    }
+@app.get("/generate/status/{task_id}")
+def generate_status(task_id: str):
+    r = requests.get(
+        STATUS_URL,
+        headers=suno_headers(),
+        params={"taskId": task_id}
+    )
 
-    if payload.style:
-        body["style"] = payload.style
-    if payload.title:
-        body["title"] = payload.title
+    if r.status_code != 200:
+        raise HTTPException(status_code=404, detail=r.text)
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        res = await client.post(
-            MUSIC_GENERATE_URL,
-            headers=suno_headers(),
-            json=body
-        )
+    res = r.json()
 
-    if res.status_code != 200:
-        print("SUNO GENERATE ERROR:", res.text)
-        raise HTTPException(status_code=500, detail="Gagal generate musik")
+    item = None
+    if isinstance(res.get("data"), list) and len(res["data"]) > 0:
+        item = res["data"][0]
 
-    return res.json()
+    if not item:
+        return {"status": "processing", "result": res}
 
-@app.get("/record-info/{task_id}")
-async def record_info(task_id: str):
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            STATUS_URL,
-            headers=suno_headers(),
-            params={"taskId": task_id}
-        )
-    return res.json()
+    state = item.get("state") or item.get("status")
+    audio_url = (
+        item.get("audio_url")
+        or item.get("audioUrl")
+        or item.get("audio")
+    )
 
-@app.post("/callback")
-async def callback(request: Request):
-    data = await request.json()
+    if state == "succeeded" and audio_url:
+        # ===== SIMPAN MP3 =====
+        audio_bytes = requests.get(audio_url).content
+        file_path = f"media/{task_id}.mp3"
+        with open(file_path, "wb") as f:
+            f.write(audio_bytes)
 
-    try:
-        task_id = data.get("taskId") or data.get("task_id")
+        local_audio_url = f"{BASE_URL}/media/{task_id}.mp3"
 
-        items = data.get("data") or []
-        if not items:
-            return {"status": "ignored"}
+        # ===== SIMPAN KE DATABASE (INI YANG DARI TADI TIDAK ADA) =====
+        conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO songs (task_id, title, audio_url)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (task_id) DO NOTHING;
+        """, (
+            task_id,
+            item.get("title"),
+            local_audio_url
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {
+            "status": "done",
+            "audio_url": local_audio_url
+        }
+
+    return {"status": "processing", "result": item}
 
         item = items[0]
 
@@ -189,5 +199,6 @@ async def callback(request: Request):
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
 
 
