@@ -2,7 +2,7 @@ import os
 import httpx
 import requests
 import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -21,11 +21,18 @@ BASE_URL = os.getenv(
     "https://ai-music-fattah.onrender.com"
 )
 
+CALLBACK_URL = f"{BASE_URL}/callback"
+
 SUNO_BASE_API = "https://api.kie.ai/api/v1"
 STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
 MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
 STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
 
+# ================= APP =================
+app = FastAPI(
+    title="AI Music Suno API Wrapper",
+    version="1.0.3"
+)
 
 # ================= STATIC FILES =================
 app.mount("/media", StaticFiles(directory="media"), name="media")
@@ -51,20 +58,15 @@ def suno_headers():
         "Content-Type": "application/json"
     }
 
-def normalize_model(model: str) -> str:
-    if model.lower() in ["v4", "v4_5", "v45"]:
-        return "V4_5"
-    return model
-
 def get_db_conn():
     if not DATABASE_URL:
         raise HTTPException(status_code=500, detail="DATABASE_URL not set")
     return psycopg2.connect(DATABASE_URL)
 
-# ================= ENDPOINTS =================
+# ================= BASIC =================
 @app.get("/")
 def root():
-    return {"status": "running", "service": "AI Music Suno API"}
+    return {"status": "running"}
 
 @app.get("/health")
 def health():
@@ -81,7 +83,39 @@ async def boost_style(payload: BoostStyleRequest):
         )
     return res.json()
 
-# ================= CHECK STATUS + AUTO SAVE =================
+# ================= GENERATE MUSIC =================
+@app.post("/generate-music")
+async def generate_music(payload: GenerateMusicRequest):
+    body = {
+        "prompt": payload.prompt,
+        "customMode": payload.customMode,
+        "instrumental": payload.instrumental,
+        "model": payload.model,
+        "callBackUrl": CALLBACK_URL
+    }
+
+    if payload.style:
+        body["style"] = payload.style
+    if payload.title:
+        body["title"] = payload.title
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            MUSIC_GENERATE_URL,
+            headers=suno_headers(),
+            json=body
+        )
+
+    return res.json()
+
+# ================= CALLBACK (OPTIONAL LOG) =================
+@app.post("/callback")
+async def callback(request: Request):
+    data = await request.json()
+    print("SUNO CALLBACK:", data)
+    return {"status": "received"}
+
+# ================= STATUS + AUTO SAVE + AUTO DB =================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
     r = requests.get(
@@ -110,7 +144,7 @@ def generate_status(task_id: str):
     if state != "succeeded" or not audio_url:
         return {"status": "processing"}
 
-    # ================= SIMPAN MP3 =================
+    # ================= SAVE MP3 =================
     file_path = f"media/{task_id}.mp3"
     if not os.path.exists(file_path):
         audio_bytes = requests.get(audio_url).content
@@ -119,7 +153,7 @@ def generate_status(task_id: str):
 
     local_audio_url = f"{BASE_URL}/media/{task_id}.mp3"
 
-    # ================= SIMPAN DATABASE =================
+    # ================= SAVE DATABASE =================
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute("""
@@ -156,4 +190,3 @@ def db_all():
     cur.close()
     conn.close()
     return rows
-
