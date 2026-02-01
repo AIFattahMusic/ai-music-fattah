@@ -127,70 +127,67 @@ async def record_info(task_id: str):
 @app.post("/callback")
 async def callback(request: Request):
     data = await request.json()
-    print("SUNO CALLBACK:", data)
-    return {"status": "received"}
 
-@app.get("/generate/status/{task_id}")
-def generate_status(task_id: str):
-    r = requests.get(
-        STATUS_URL,
-        headers=suno_headers(),
-        params={"taskId": task_id}
-    )
+    try:
+        task_id = data.get("taskId") or data.get("task_id")
 
-    if r.status_code != 200:
-        print("STATUS ERROR:", r.text)
-        raise HTTPException(status_code=404, detail=r.text)
+        items = data.get("data") or []
+        if not items:
+            return {"status": "ignored"}
 
-    res = r.json()
+        item = items[0]
 
-    item = None
-    if isinstance(res.get("data"), list) and len(res["data"]) > 0:
-        item = res["data"][0]
+        state = item.get("state") or item.get("status")
+        if state != "succeeded":
+            return {"status": "processing"}
 
-    if not item:
-        return {"status": "processing", "result": res}
+        audio_url = (
+            item.get("audio_url")
+            or item.get("audioUrl")
+            or item.get("audio")
+            or item.get("streamAudioUrl")
+        )
 
-    state = item.get("state") or item.get("status")
-    audio_url = (
-        item.get("audio_url")
-        or item.get("audioUrl")
-        or item.get("audio")
-    )
+        image_url = item.get("imageUrl")
+        lyrics = item.get("lyrics")
+        title = item.get("title", "Untitled")
 
-    if state == "succeeded" and audio_url:
+        if not audio_url:
+            return {"status": "no_audio"}
+
+        # === SAVE MP3 ===
         audio_bytes = requests.get(audio_url).content
-
         file_path = f"media/{task_id}.mp3"
+
         with open(file_path, "wb") as f:
             f.write(audio_bytes)
 
-        return {
-            "status": "done",
-            "audio_url": f"{BASE_URL}/media/{task_id}.mp3",
-            "result": item
-        }
+        local_audio_url = f"{BASE_URL}/media/{task_id}.mp3"
 
-    return {"status": "processing", "result": item}
+        # === INSERT DB ===
+        conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        cur = conn.cursor()
 
-# ================= DB TEST =================
-def get_conn():
-    return psycopg2.connect(os.environ["DATABASE_URL"])
+        cur.execute("""
+            INSERT INTO songs (task_id, title, audio_url, cover_url, lyrics, status)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (task_id) DO NOTHING
+        """, (
+            task_id,
+            title,
+            local_audio_url,
+            image_url,
+            lyrics,
+            "done"
+        ))
 
-@app.get("/db-all")
-def db_all():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public';
-    """)
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return {
-        "status": "ok",
-        "tables": rows
-    }
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {"status": "saved"}
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
