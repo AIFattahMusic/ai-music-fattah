@@ -1,134 +1,138 @@
 import os
 import uuid
-import time
+import httpx
 import requests
 import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 
-# ======================
-# ENV
-# ======================
-DATABASE_URL = os.getenv("DATABASE_URL")
+# ================= SETUP =================
+os.makedirs("media", exist_ok=True)
+
 SUNO_API_KEY = os.getenv("SUNO_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
+BASE_URL = os.getenv("BASE_URL", "https://ai-music-fattah.onrender.com")
 
-if not DATABASE_URL or not SUNO_API_KEY:
-    raise RuntimeError("ENV DATABASE_URL / SUNO_API_KEY belum diset")
+CALLBACK_URL = f"{BASE_URL}/callback"
 
-# ======================
-# DATABASE
-# ======================
-conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-conn.autocommit = True
-cur = conn.cursor()
+SUNO_BASE_API = "https://api.kie.ai/v1"
+MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/music"
+STATUS_URL = f"{SUNO_BASE_API}/music"
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS songs (
-    id SERIAL PRIMARY KEY,
-    title TEXT,
-    style TEXT,
-    audio_url TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-""")
+app = FastAPI(
+    title="AI Music API",
+    version="1.0.3"
+)
 
-# ======================
-# APP
-# ======================
-app = FastAPI(title="AI Music API")
+app.mount("/media", StaticFiles(directory="media"), name="media")
 
-# ======================
-# SCHEMA
-# ======================
-class GenerateRequest(BaseModel):
+# ================= MODELS =================
+class GenerateMusicRequest(BaseModel):
     prompt: str
-    title: str
-    style: str = "default"
+    style: Optional[str] = None
+    title: Optional[str] = None
+    instrumental: bool = False
+    model: str = "v4"
 
-# ======================
-# ROUTES
-# ======================
+# ================= HELPERS =================
+def suno_headers():
+    if not SUNO_API_KEY:
+        raise HTTPException(500, "SUNO_API_KEY not set")
+    return {
+        "Authorization": f"Bearer {SUNO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+# ================= ROOT =================
 @app.get("/")
 def root():
     return {"status": "running"}
 
-# ======================
-# GENERATE MUSIC (SYNC)
-# ======================
+# ================= GENERATE =================
 @app.post("/generate-music")
-def generate_music(data: GenerateRequest):
-    task_id = str(uuid.uuid4())
+async def generate_music(payload: GenerateMusicRequest):
+    body = {
+        "prompt": payload.prompt,
+        "instrumental": payload.instrumental,
+        "model": payload.model,
+        "callback_url": CALLBACK_URL
+    }
 
-    # 1. Kirim generate ke Suno
-    r = requests.post(
-        "https://api.suno.ai/generate",
-        headers={
-            "Authorization": f"Bearer {SUNO_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "prompt": data.prompt,
-            "title": data.title,
-            "style": data.style,
-            "instrumental": False,
-            "model": "V4_5"
-        },
-        timeout=20
-    )
+    if payload.style:
+        body["style"] = payload.style
+    if payload.title:
+        body["title"] = payload.title
 
-    if r.status_code != 200:
-        raise HTTPException(500, "Gagal generate musik")
-
-    suno_task_id = r.json().get("data", {}).get("taskId")
-    if not suno_task_id:
-        raise HTTPException(500, "taskId Suno tidak ada")
-
-    # 2. Polling status Suno
-    audio_url = None
-    for _ in range(20):  # max ~40 detik
-        time.sleep(2)
-        s = requests.get(
-            f"https://api.suno.ai/status/{suno_task_id}",
-            headers={"Authorization": f"Bearer {SUNO_API_KEY}"},
-            timeout=10
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            MUSIC_GENERATE_URL,
+            headers=suno_headers(),
+            json=body
         )
-        data_status = s.json()
-        if data_status.get("status") == "completed":
-            audio_url = data_status["data"]["audio_url"]
-            break
 
-    if not audio_url:
-        raise HTTPException(500, "Audio tidak selesai dibuat")
+    data = r.json()
 
-    # 3. Simpan ke DB
-    cur.execute(
-        "INSERT INTO songs (title, style, audio_url) VALUES (%s,%s,%s)",
-        (data.title, data.style, audio_url)
-    )
+    if "task_id" not in data:
+        raise HTTPException(500, data)
 
     return {
         "code": 200,
         "msg": "success",
-        "audio_url": audio_url
+        "taskId": data["task_id"]
     }
 
-# ======================
-# GET SONGS (APK)
-# ======================
-@app.get("/songs")
-def get_songs():
-    cur.execute(
-        "SELECT id, title, style, audio_url, created_at FROM songs ORDER BY id DESC"
+# ================= STATUS =================
+@app.get("/generate/status/{task_id}")
+def generate_status(task_id: str):
+    r = requests.get(
+        f"{STATUS_URL}/{task_id}",
+        headers=suno_headers(),
+        timeout=20
     )
-    rows = cur.fetchall()
 
-    return [
-        {
-            "id": r[0],
-            "title": r[1],
-            "style": r[2],
-            "audio_url": r[3],
-            "created_at": r[4]
-        }
-        for r in rows
-    ]
+    if r.status_code != 200:
+        raise HTTPException(500, r.text)
+
+    data = r.json()
+
+    if data.get("status") != "completed":
+        return {"status": "processing", "raw": data}
+
+    audio_url = data.get("audio_url")
+    if not audio_url:
+        raise HTTPException(500, "audio_url missing")
+
+    audio = requests.get(audio_url).content
+
+    filename = f"{uuid.uuid4()}.mp3"
+    path = f"media/{filename}"
+
+    with open(path, "wb") as f:
+        f.write(audio)
+
+    return {
+        "status": "done",
+        "audio_url": f"{BASE_URL}/media/{filename}"
+    }
+
+# ================= CALLBACK =================
+@app.post("/callback")
+async def callback(req: Request):
+    data = await req.json()
+    print("CALLBACK:", data)
+    return {"ok": True}
+
+# ================= DB TEST =================
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
+
+@app.get("/db-test")
+def db_test():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT 1;")
+    cur.close()
+    conn.close()
+    return {"db": "ok"}
