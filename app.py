@@ -151,4 +151,22 @@ def generate_status(task_id: str):
         if state != "succeeded":
             return {"status": "processing"}
 
-        
+        ‎# ================= DB TEST =================
+‎def get_conn():
+‎    return psycopg2.connect(os.environ["DATABASE_URL"])
+‎
+‎@app.get("/db-all")
+‎def db_all():
+‎    conn = get_conn()
+‎    cur = conn.cursor()
+‎    cur.execute("""
+‎        SELECT *
+‎        FROM information_schema.tables
+‎        WHERE table_schema = 'public';
+‎    """)
+‎    rows = cur.fetchall()
+‎    cur.close()
+‎    conn.close()
+‎    return rows
+‎
+
