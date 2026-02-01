@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 # ==================================================
-# WAJIB PALING ATAS: BUAT FOLDER MEDIA
+# BUAT FOLDER MEDIA
 # ==================================================
 os.makedirs("media", exist_ok=True)
 
@@ -31,13 +31,13 @@ STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
 # ================= APP =================
 app = FastAPI(
     title="AI Music Suno API Wrapper",
-    version="1.0.3"
+    version="1.0.4"
 )
 
 # ================= STATIC FILES =================
 app.mount("/media", StaticFiles(directory="media"), name="media")
 
-# ================= REQUEST MODEL =================
+# ================= MODELS =================
 class BoostStyleRequest(BaseModel):
     content: str
 
@@ -108,14 +108,14 @@ async def generate_music(payload: GenerateMusicRequest):
 
     return res.json()
 
-# ================= CALLBACK (OPTIONAL LOG) =================
+# ================= CALLBACK =================
 @app.post("/callback")
 async def callback(request: Request):
     data = await request.json()
     print("SUNO CALLBACK:", data)
     return {"status": "received"}
 
-# ================= STATUS + AUTO SAVE + AUTO DB =================
+# ================= STATUS → SAVE → DB =================
 @app.get("/generate/status/{task_id}")
 def generate_status(task_id: str):
     r = requests.get(
@@ -129,8 +129,8 @@ def generate_status(task_id: str):
 
     res = r.json()
 
-    if not isinstance(res.get("data"), list) or len(res["data"]) == 0:
-        return {"status": "processing"}
+    if not isinstance(res.get("data"), list) or not res["data"]:
+        return {"status": "processing", "step": "waiting_suno"}
 
     item = res["data"][0]
     state = item.get("state") or item.get("status")
@@ -141,10 +141,20 @@ def generate_status(task_id: str):
         or item.get("audio")
     )
 
-    if state != "succeeded" or not audio_url:
-        return {"status": "processing"}
+    if state != "succeeded":
+        return {
+            "status": "processing",
+            "step": "generating",
+            "state": state
+        }
 
-    # ================= SAVE MP3 =================
+    if not audio_url:
+        return {
+            "status": "processing",
+            "step": "waiting_audio_url"
+        }
+
+    # ===== SAVE MP3 =====
     file_path = f"media/{task_id}.mp3"
     if not os.path.exists(file_path):
         audio_bytes = requests.get(audio_url).content
@@ -153,7 +163,7 @@ def generate_status(task_id: str):
 
     local_audio_url = f"{BASE_URL}/media/{task_id}.mp3"
 
-    # ================= SAVE DATABASE =================
+    # ===== SAVE DATABASE =====
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute("""
@@ -176,7 +186,43 @@ def generate_status(task_id: str):
         "audio_url": local_audio_url
     }
 
-# ================= DB TEST =================
+# ================= LIHAT ISI SONGS =================
+@app.get("/songs")
+def get_songs():
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, task_id, title, audio_url, created_at
+        FROM songs
+        ORDER BY created_at DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    return [
+        {
+            "id": r[0],
+            "task_id": r[1],
+            "title": r[2],
+            "audio_url": r[3],
+            "created_at": r[4]
+        }
+        for r in rows
+    ]
+
+# ================= DB COUNT (BUKTI KERAS) =================
+@app.get("/db-count")
+def db_count():
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM songs;")
+    count = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return {"songs_count": count}
+
+# ================= DB TABLE LIST =================
 @app.get("/db-all")
 def db_all():
     conn = get_db_conn()
