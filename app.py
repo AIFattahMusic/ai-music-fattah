@@ -1,174 +1,180 @@
 import os
 import uuid
 import requests
-import httpx
 import psycopg2
+from datetime import datetime
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
-# ==================================================
-# SETUP
-# ==================================================
-os.makedirs("media", exist_ok=True)
+# ======================================================
+# ENV
+# ======================================================
+DATABASE_URL = os.environ.get("DATABASE_URL")
+SUNO_API_KEY = os.environ.get("SUNO_API_KEY")
+BASE_URL = os.environ.get("BASE_URL")  # contoh: https://ai-music-fattah-1.onrender.com
 
-SUNO_API_KEY = os.getenv("SUNO_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL or not SUNO_API_KEY or not BASE_URL:
+    raise RuntimeError("ENV DATABASE_URL / SUNO_API_KEY / BASE_URL belum diset")
 
-BASE_URL = os.getenv(
-    "BASE_URL",
-    "https://ai-music-fattah.onrender.com"
-)
+# ======================================================
+# DATABASE
+# ======================================================
+conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+conn.autocommit = True
+cur = conn.cursor()
 
-CALLBACK_URL = f"{BASE_URL}/callback"
+cur.execute("""
+CREATE TABLE IF NOT EXISTS songs (
+    id SERIAL PRIMARY KEY,
+    task_id TEXT UNIQUE,
+    title TEXT,
+    style TEXT,
+    audio_url TEXT,
+    status TEXT DEFAULT 'processing',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+""")
 
-SUNO_BASE_API = "https://api.kie.ai/api/v1"
-STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
-MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
-STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
-
-# ==================================================
+# ======================================================
 # APP
-# ==================================================
+# ======================================================
 app = FastAPI(title="AI Music API", version="1.0.0")
-app.mount("/media", StaticFiles(directory="media"), name="media")
 
-# ==================================================
-# MODELS
-# ==================================================
+# ======================================================
+# SCHEMA
+# ======================================================
 class GenerateMusicRequest(BaseModel):
-    prompt: str
-    title: Optional[str] = None
-    style: Optional[str] = None
-    instrumental: bool = False
-    customMode: bool = False
-    model: str = "V4_5"
+    title: str
+    style: str = "default"
 
-# ==================================================
-# HELPERS
-# ==================================================
-def suno_headers():
-    if not SUNO_API_KEY:
-        raise HTTPException(500, "SUNO_API_KEY not set")
-    return {
-        "Authorization": f"Bearer {SUNO_API_KEY}",
-        "Content-Type": "application/json"
-    }
+class CallbackPayload(BaseModel):
+    audio_url: str
 
-def get_conn():
-    if not DATABASE_URL:
-        raise HTTPException(500, "DATABASE_URL not set")
-    return psycopg2.connect(DATABASE_URL)
-
-def insert_song(task_id, title, audio_url, file_path):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO songs (task_id, title, audio_url, file_path)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (task_id) DO NOTHING
-    """, (task_id, title, audio_url, file_path))
-    conn.commit()
-    cur.close()
-    conn.close()
-
-# ==================================================
-# ENDPOINTS
-# ==================================================
+# ======================================================
+# ROOT
+# ======================================================
 @app.get("/")
 def root():
     return {"status": "running"}
 
+# ======================================================
+# GENERATE MUSIC (DIPANGGIL APK)
+# ======================================================
 @app.post("/generate-music")
-async def generate_music(payload: GenerateMusicRequest):
-    body = {
-        "prompt": payload.prompt,
-        "instrumental": payload.instrumental,
-        "customMode": payload.customMode,
-        "model": payload.model,
-        "callBackUrl": CALLBACK_URL
-    }
+def generate_music(data: GenerateMusicRequest):
+    task_id = str(uuid.uuid4())
 
-    if payload.title:
-        body["title"] = payload.title
-    if payload.style:
-        body["style"] = payload.style
+    # simpan task awal
+    cur.execute(
+        """
+        INSERT INTO songs (task_id, title, style, status)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (task_id, data.title, data.style, "processing")
+    )
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        res = await client.post(
-            MUSIC_GENERATE_URL,
-            headers=suno_headers(),
-            json=body
+    callback_url = f"{BASE_URL}/callback/{task_id}"
+
+    # panggil provider (ASYNC)
+    try:
+        requests.post(
+            "https://api.suno.ai/generate",
+            headers={
+                "Authorization": f"Bearer {SUNO_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "title": data.title,
+                "style": data.style,
+                "callback_url": callback_url
+            },
+            timeout=10
         )
-
-    return res.json()
-
-@app.get("/generate/status/{task_id}")
-def generate_status(task_id: str):
-    r = requests.get(
-        STATUS_URL,
-        headers=suno_headers(),
-        params={"taskId": task_id}
-    )
-
-    if r.status_code != 200:
-        raise HTTPException(404, r.text)
-
-    data = r.json().get("data", [])
-    if not data:
-        return {"status": "processing"}
-
-    item = data[0]
-    state = item.get("state") or item.get("status")
-    audio_url = item.get("audio_url") or item.get("audioUrl")
-
-    if state != "succeeded" or not audio_url:
-        return {"status": "processing"}
-
-    # ================= DOWNLOAD AUDIO =================
-    audio_bytes = requests.get(audio_url).content
-
-    filename = f"{uuid.uuid4()}.mp3"
-    file_path = f"media/{filename}"
-
-    with open(file_path, "wb") as f:
-        f.write(audio_bytes)
-
-    public_url = f"{BASE_URL}/media/{filename}"
-
-    # ================= INSERT DATABASE =================
-    insert_song(
-        task_id=task_id,
-        title=item.get("title"),
-        audio_url=public_url,
-        file_path=file_path
-    )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     return {
-        "status": "done",
-        "audio_url": public_url,
-        "title": item.get("title")
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "taskId": task_id
+        }
     }
 
-@app.post("/callback")
-async def callback(request: Request):
-    data = await request.json()
-    # callback tidak wajib insert (pakai polling)
+# ======================================================
+# CALLBACK (DIPANGGIL PROVIDER)
+# ======================================================
+@app.post("/callback/{task_id}")
+def callback(task_id: str, payload: CallbackPayload):
+    if not payload.audio_url:
+        raise HTTPException(status_code=400, detail="audio_url kosong")
+
+    cur.execute(
+        """
+        UPDATE songs
+        SET audio_url=%s, status=%s
+        WHERE task_id=%s
+        """,
+        (payload.audio_url, "done", task_id)
+    )
+
     return {"ok": True}
 
+# ======================================================
+# CEK STATUS (DIPANGGIL APK)
+# ======================================================
+@app.get("/generate/status/{task_id}")
+def get_status(task_id: str):
+    cur.execute(
+        """
+        SELECT task_id, title, style, audio_url, status, created_at
+        FROM songs
+        WHERE task_id=%s
+        """,
+        (task_id,)
+    )
+    row = cur.fetchone()
+
+    # ⬅️ INI PENTING: JANGAN 500
+    if row is None:
+        return {
+            "task_id": task_id,
+            "status": "processing",
+            "audio_url": None
+        }
+
+    return {
+        "task_id": row[0],
+        "title": row[1],
+        "style": row[2],
+        "audio_url": row[3],
+        "status": row[4],
+        "created_at": row[5]
+    }
+
+# ======================================================
+# LIST SEMUA LAGU (OPTIONAL)
+# ======================================================
 @app.get("/songs")
-def get_songs():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, title, audio_url, created_at
+def list_songs():
+    cur.execute(
+        """
+        SELECT task_id, title, style, audio_url, status, created_at
         FROM songs
         ORDER BY created_at DESC
-    """)
+        """
+    )
     rows = cur.fetchall()
-    cur.close()
-    conn.close()
 
-    return rows
+    return [
+        {
+            "task_id": r[0],
+            "title": r[1],
+            "style": r[2],
+            "audio_url": r[3],
+            "status": r[4],
+            "created_at": r[5]
+        }
+        for r in rows
+    ]
