@@ -182,11 +182,15 @@ def db_all():
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        SELECT *
+        SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'public';
     """)
     rows = cur.fetchall()
     cur.close()
     conn.close()
-    return rows
+    return {
+        "status": "ok",
+        "tables": rows
+    }
+
