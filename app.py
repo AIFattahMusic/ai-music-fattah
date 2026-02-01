@@ -26,11 +26,6 @@ STYLE_GENERATE_URL = f"{SUNO_BASE_API}/style/generate"
 MUSIC_GENERATE_URL = f"{SUNO_BASE_API}/generate"
 STATUS_URL = f"{SUNO_BASE_API}/generate/record-info"
 
-# ================= APP =================
-app = FastAPI(
-    title="AI Music Suno API Wrapper",
-    version="1.0.4"
-)
 
 # ================= STATIC FILES =================
 app.mount("/media", StaticFiles(directory="media"), name="media")
@@ -161,3 +156,4 @@ def db_all():
     cur.close()
     conn.close()
     return rows
+
