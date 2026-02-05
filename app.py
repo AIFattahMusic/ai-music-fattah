@@ -48,7 +48,7 @@
 ‎    title: Optional[str] = None
 ‎    instrumental: bool = False
 ‎    vocalGender: Optional[str] = None   # "m" | "f"
-‎    lyrics: Optional[str] = None
+‎    lyrics: Optional[str] = True
 ‎    customMode: bool = False
 ‎    model: str = "V4_5"
 ‎
@@ -212,4 +212,5 @@
 ‎    return rows
 ‎
 ‎
+
 
