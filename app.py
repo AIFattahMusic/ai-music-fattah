@@ -47,6 +47,8 @@
 ‎    style: Optional[str] = None
 ‎    title: Optional[str] = None
 ‎    instrumental: bool = False
+‎    vocalGender: Optional[str] = None   # "m" | "f"
+‎    lyrics: Optional[str] = None
 ‎    customMode: bool = False
 ‎    model: str = "V4_5"
 ‎
@@ -89,17 +91,18 @@
 ‎@app.post("/generate-music")
 ‎async def generate_music(payload: GenerateMusicRequest):
 ‎    body = {
-‎        "prompt": payload.prompt,
-‎        "customMode": payload.customMode,
-‎        "instrumental": payload.instrumental,
-‎        "model": normalize_model(payload.model),
-‎        "callBackUrl": CALLBACK_URL
-‎    }
+‎    "prompt": payload.prompt,
+‎    "customMode": payload.customMode,
+‎    "instrumental": payload.instrumental,
+‎    "model": normalize_model(payload.model),
+‎    "callBackUrl": CALLBACK_URL
+‎}
 ‎
-‎    if payload.style:
-‎        body["style"] = payload.style
-‎    if payload.title:
-‎        body["title"] = payload.title
+‎if payload.vocalGender:
+‎    body["vocalGender"] = payload.vocalGender
+‎
+‎if payload.lyrics:
+‎    body["lyrics"] = payload.lyrics
 ‎
 ‎    async with httpx.AsyncClient(timeout=60) as client:
 ‎        res = await client.post(
@@ -190,7 +193,7 @@
 ‎    except Exception as e:
 ‎        return {"status": "error", "error": str(e)}
 ‎
-‎‎# ================= DB TEST =================
+‎# ================= DB TEST =================
 ‎def get_conn():
 ‎    return psycopg2.connect(os.environ["DATABASE_URL"])
 ‎
@@ -207,5 +210,6 @@
 ‎    cur.close()
 ‎    conn.close()
 ‎    return rows
+‎
 ‎
 
